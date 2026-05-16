@@ -30,12 +30,15 @@ dependencies = [
     "onnx-asr>=0.6.0,<1.0",
     "onnxruntime-gpu==1.26.0",
     "numpy>=2.0,<3.0",
-    # Real simulator backend: loads the managed .NET DLL via pythonnet.
-    # Windows-only; the mock backend has no such dependency.
-    'pythonnet==3.0.5 ; sys_platform == "win32"',
 ]
 
 [project.optional-dependencies]
+# Real simulator backend: loads the managed .NET DLL via pythonnet. Optional
+# because the mock backend is the development default and needs no .NET. Only
+# install this when integrating against the real simulator (Windows-only).
+# Note: pythonnet 3.0.x supports Python <= 3.13; on Python 3.14 only
+# pythonnet 3.1.0rc0+ is available, so this is left unpinned.
+real-sim = ['pythonnet>=3.0.5 ; sys_platform == "win32"']
 # parakeet_nemo STT backend. Heavy, optional — parakeet_onnx is the default.
 nemo = ["nemo-toolkit[asr]>=2.0"]
 dev = [
