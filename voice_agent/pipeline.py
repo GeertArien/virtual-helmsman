@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pipecat.pipeline.pipeline import Pipeline
-from pipecat.pipeline.task import PipelineParams, PipelineTask
+from pipecat.pipeline.task import PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
@@ -129,7 +129,9 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
             conversation_logger,
         ]
     )
-    task = PipelineTask(pipeline, params=PipelineParams(allow_interruptions=True))
+    # Interruption handling lives in the turn strategies (VADUserTurnStartStrategy
+    # enables interruptions by default), not in PipelineParams.
+    task = PipelineTask(pipeline)
 
     log.info(
         "pipeline_built",
