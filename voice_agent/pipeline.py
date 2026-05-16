@@ -9,9 +9,9 @@ Pipeline order::
 The two observer processors sit last so they see the full downstream frame
 flow (VAD, STT, LLM, tool, and TTS frames).
 
-Targets Pipecat 1.2.x. The framework-wiring import paths and the
-``LLMContext`` / ``LLMContextAggregatorPair`` API are current as of that
-release; verify against the installed package if you bump the pin.
+VAD and turn detection are wired into the **user context aggregator** (Pipecat
+1.2.x): the VAD analyzer and the user-turn stop strategy are passed via
+``LLMUserAggregatorParams``. The transport itself just streams audio.
 """
 
 from __future__ import annotations
@@ -23,9 +23,10 @@ from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
+    LLMUserAggregatorParams,
 )
-from pipecat.transports.base_transport import TransportParams
-from pipecat.transports.local.audio import LocalAudioTransport
+from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from voice_agent.backends.llm.openai_compatible import build_llm
 from voice_agent.backends.simulator.base import SimulatorClient
@@ -75,7 +76,7 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
 
     # --- local models ---------------------------------------------------
     vad = create_vad(config.vad)
-    turn_analyzer = create_turn(config.turn_detection)
+    turn_stop_strategy = create_turn(config.turn_detection)
     stt = create_stt(config.stt)
     tts = create_tts(config.tts)
     llm = build_llm(config.llm)
@@ -83,25 +84,27 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
     # --- transport ------------------------------------------------------
     # TODO: config.audio.input_device/output_device are accepted but not yet
     # mapped to device indices; the OS default device is used.
-    transport_kwargs = {
-        "audio_in_enabled": True,
-        "audio_out_enabled": True,
-        "vad_analyzer": vad,
-    }
-    if turn_analyzer is not None:
-        transport_kwargs["turn_analyzer"] = turn_analyzer
-    transport = LocalAudioTransport(TransportParams(**transport_kwargs))
+    transport = LocalAudioTransport(
+        LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
+    )
 
     # --- simulator + tools ---------------------------------------------
     # One SimulatorClient, built once, shared by all three tool handlers.
     simulator = create_simulator(config.simulator)
     register_ship_tools(llm, simulator)
 
+    # --- context aggregator (carries VAD + turn detection) --------------
     context = LLMContext(
         [{"role": "system", "content": SYSTEM_PROMPT}],
         build_tools_schema(),
     )
-    context_aggregator = LLMContextAggregatorPair(context)
+    context_aggregator = LLMContextAggregatorPair(
+        context,
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=vad,
+            user_turn_strategies=UserTurnStrategies(stop=[turn_stop_strategy]),
+        ),
+    )
 
     # --- observers ------------------------------------------------------
     latency_tracker = LatencyTracker(

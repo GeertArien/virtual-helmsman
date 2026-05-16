@@ -1,16 +1,20 @@
-"""VAD-only turn detection: no semantic model (benchmarking fallback).
+"""VAD-only turn detection: no semantic model (benchmarking baseline).
 
-There is no analyzer object — when no turn analyzer is attached to the
-transport, Pipecat falls back to ending the turn on VAD silence timing
-(``VADParams.stop_secs``). The builder therefore returns ``None``, and
-``pipeline.py`` simply omits the ``turn_analyzer`` argument in that case.
+The user turn ends purely on a VAD silence timeout — Pipecat's
+``SpeechTimeoutUserTurnStopStrategy``. This is the cheaper baseline to compare
+against ``smart_turn_v3`` when measuring what the semantic model costs in
+latency versus what it buys in fewer mid-sentence cut-offs.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from pipecat.turns.user_stop.speech_timeout_user_turn_stop_strategy import (
+    SpeechTimeoutUserTurnStopStrategy,
+)
 
-def build_turn(config: Any) -> None:
-    """Return ``None``: VAD-only turn-taking needs no analyzer object."""
-    return None
+
+def build_turn(config: Any) -> SpeechTimeoutUserTurnStopStrategy:
+    """Build the VAD-silence-timeout stop strategy."""
+    return SpeechTimeoutUserTurnStopStrategy()

@@ -99,10 +99,16 @@ def test_turn_factory_registers_all_v1_backends() -> None:
     assert set(turn_factory._BUILDERS) == {"smart_turn_v3", "vad_only"}
 
 
-def test_turn_factory_vad_only_returns_none() -> None:
-    # vad_only is the absence of a turn analyzer; the builder yields None.
-    assert turn_factory.create_turn(SimpleNamespace(backend="vad_only")) is None
-    assert vad_only.build_turn(SimpleNamespace(backend="vad_only")) is None
+def test_turn_factory_vad_only_builds_stop_strategy() -> None:
+    # vad_only ends the turn on a VAD silence timeout (no semantic model).
+    from pipecat.turns.user_stop import BaseUserTurnStopStrategy
+
+    strategy = turn_factory.create_turn(SimpleNamespace(backend="vad_only"))
+    assert isinstance(strategy, BaseUserTurnStopStrategy)
+    assert isinstance(
+        vad_only.build_turn(SimpleNamespace(backend="vad_only")),
+        BaseUserTurnStopStrategy,
+    )
 
 
 def test_turn_factory_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:

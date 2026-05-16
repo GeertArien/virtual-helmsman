@@ -1,10 +1,18 @@
 """Smoke test: full LLM-to-tool-to-simulator path, no audio, no real sim.
 
-Builds a minimal pipeline (context aggregator -> remote LLM -> aggregator),
-registers the three ship tools against a ``MockSimulatorClient``, injects a
-fake ``TranscriptionFrame("steer course two seven zero")``, and asserts that
-the LLM emits ``set_heading`` with ``degrees ~= 270`` and that the mock's
-``command_history`` records it.
+Seeds the user utterance "steer course two seven zero" into the LLM context,
+runs a minimal pipeline (context aggregator -> remote LLM -> aggregator) with
+the three ship tools registered against a ``MockSimulatorClient``, triggers the
+LLM with an ``LLMRunFrame``, and asserts the LLM emits ``set_heading`` with
+``degrees ~= 270`` and that the mock's ``command_history`` records it.
+
+Note: the brief describes injecting a fake ``TranscriptionFrame``. With Pipecat
+1.2.x's universal context aggregator, a bare ``TranscriptionFrame`` is buffered
+into a pending user turn and only reaches the LLM once a VAD-driven turn
+completes — which cannot happen on this no-audio path. So the utterance is
+seeded straight into the context (the equivalent of a finalized transcript) and
+the LLM is triggered explicitly. The exercised path — LLM -> tool -> simulator
+— is unchanged.
 
 Requires a reachable remote LLM ($LLM_BASE_URL / config.yaml ``llm.base_url``).
 Run from the repo root:
@@ -19,7 +27,7 @@ import asyncio
 import sys
 import time
 
-from pipecat.frames.frames import TranscriptionFrame
+from pipecat.frames.frames import LLMRunFrame
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineTask
@@ -27,7 +35,6 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
 )
-from pipecat.utils.time import time_now_iso8601
 
 from voice_agent.backends.llm.openai_compatible import build_llm
 from voice_agent.backends.simulator.mock import MockSimulatorClient
@@ -54,6 +61,8 @@ async def _smoke(config_path: str) -> bool:
         [{"role": "system", "content": SYSTEM_PROMPT}],
         build_tools_schema(),
     )
+    context.add_message({"role": "user", "content": _UTTERANCE})
+
     aggregator = LLMContextAggregatorPair(context)
     pipeline = Pipeline([aggregator.user(), llm, aggregator.assistant()])
     task = PipelineTask(pipeline)
@@ -61,9 +70,7 @@ async def _smoke(config_path: str) -> bool:
     runner = PipelineRunner()
     run_handle = asyncio.create_task(runner.run(task))
 
-    await task.queue_frames(
-        [TranscriptionFrame(_UTTERANCE, "captain", time_now_iso8601())]
-    )
+    await task.queue_frames([LLMRunFrame()])
 
     deadline = time.monotonic() + _TIMEOUT_S
     while time.monotonic() < deadline and not mock.command_history:
