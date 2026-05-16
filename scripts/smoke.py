@@ -40,7 +40,7 @@ from voice_agent.backends.llm.openai_compatible import build_llm
 from voice_agent.backends.simulator.mock import MockSimulatorClient
 from voice_agent.config import load_config
 from voice_agent.logging_setup import configure_logging, new_session_id
-from voice_agent.pipeline import SYSTEM_PROMPT
+from voice_agent.pipeline import build_system_prompt
 from voice_agent.tools.schemas import build_tools_schema
 from voice_agent.tools.ship import register_ship_tools
 
@@ -58,7 +58,7 @@ async def _smoke(config_path: str) -> bool:
     register_ship_tools(llm, mock)
 
     context = LLMContext(
-        [{"role": "system", "content": SYSTEM_PROMPT}],
+        [{"role": "system", "content": build_system_prompt(config.llm)}],
         build_tools_schema(),
     )
     context.add_message({"role": "user", "content": _UTTERANCE})

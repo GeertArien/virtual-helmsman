@@ -26,6 +26,9 @@ llm:
   api_key_env: LLM_API_KEY         # optional, read from env
   timeout_seconds: 30
   max_retries: 1
+  system_prompt_prefix: ""         # model-specific control tokens prepended to
+                                   # the system prompt. NVIDIA Nemotron:
+                                   # "detailed thinking off"; Qwen3: "/no_think"
 
 simulator:
   backend: mock                    # real | mock  (mock is the dev default)

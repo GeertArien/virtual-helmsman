@@ -61,6 +61,10 @@ class LlmConfig(_Base):
     api_key_env: str = "LLM_API_KEY"
     timeout_seconds: float = 30.0
     max_retries: int = 1
+    # Prepended to the system prompt — for model-specific control tokens that
+    # are not part of the domain prompt. E.g. "detailed thinking off" disables
+    # reasoning on NVIDIA Nemotron; Qwen3 uses "/no_think". Empty = nothing added.
+    system_prompt_prefix: str = ""
 
     def resolved_api_key(self) -> str | None:
         """Return the API key from the env var named by ``api_key_env``."""

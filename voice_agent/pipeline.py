@@ -35,7 +35,7 @@ from voice_agent.backends.stt.factory import create_stt
 from voice_agent.backends.tts.factory import create_tts
 from voice_agent.backends.turn.factory import create_turn
 from voice_agent.backends.vad.factory import create_vad
-from voice_agent.config import AppConfig
+from voice_agent.config import AppConfig, LlmConfig
 from voice_agent.logging_setup import get_logger
 from voice_agent.metrics import ConversationLogger, LatencyTracker
 from voice_agent.tools.schemas import build_tools_schema
@@ -59,6 +59,16 @@ the current heading; "rudder amidships" means steer the current heading.
 
 Keep replies short. No filler.
 """
+
+
+def build_system_prompt(llm_config: LlmConfig) -> str:
+    """Compose the system prompt: optional model-specific prefix + domain prompt.
+
+    ``llm.system_prompt_prefix`` carries model-specific control tokens (e.g.
+    ``detailed thinking off`` for Nemotron) so the domain prompt stays portable.
+    """
+    prefix = llm_config.system_prompt_prefix.strip()
+    return f"{prefix}\n\n{SYSTEM_PROMPT}" if prefix else SYSTEM_PROMPT
 
 
 @dataclass
@@ -95,7 +105,7 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
 
     # --- context aggregator (carries VAD + turn detection) --------------
     context = LLMContext(
-        [{"role": "system", "content": SYSTEM_PROMPT}],
+        [{"role": "system", "content": build_system_prompt(config.llm)}],
         build_tools_schema(),
     )
     context_aggregator = LLMContextAggregatorPair(
