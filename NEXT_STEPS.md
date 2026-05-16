@@ -1,5 +1,10 @@
 # Next steps
 
+> **Session name: `virtual-helmsman-build`**
+> Resume with `claude --resume` in `D:\dev\virtual-helmsman` (pick the session
+> for this work) or `claude -c` to continue the most recent. This file is the
+> entry point — read it first, then work the phases in order.
+
 Status at end of scaffold/implementation session (2026-05-16): all code, tests,
 scripts, and docs are written and committed; 49 unit tests pass; `ruff` is
 clean; every Pipecat 1.2.1 import/constructor used is verified against the
