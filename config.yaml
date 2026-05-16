@@ -1,0 +1,50 @@
+# Default config: Parakeet-1.1B / Kokoro / Silero / smart_turn_v3 / mock simulator.
+# Env vars override values here: LLM_BASE_URL, LLM_API_KEY, SIMULATOR_BACKEND.
+
+stt:
+  backend: parakeet_onnx          # parakeet_onnx | parakeet_nemo | whisper
+  model: nvidia/parakeet-tdt-1.1b
+  device: cuda
+  language: en
+
+tts:
+  backend: kokoro                  # kokoro | piper
+  voice: af_bella
+  device: cuda
+
+vad:
+  backend: silero
+  threshold: 0.5
+
+turn_detection:
+  backend: smart_turn_v3           # smart_turn_v3 | vad_only
+  device: cpu
+
+llm:
+  base_url: http://llm-server:8000/v1
+  model: qwen3-30b-a3b-instruct
+  api_key_env: LLM_API_KEY         # optional, read from env
+  timeout_seconds: 30
+  max_retries: 1
+
+simulator:
+  backend: mock                    # real | mock  (mock is the dev default)
+  real:
+    host: 127.0.0.1                # passed to the vendored wrapper
+    port: 9100
+    connect_timeout_seconds: 2
+  mock:
+    initial_heading: 0
+    initial_engine_order: stop
+    log_commands: true             # log every command for test inspection
+
+audio:
+  input_device: default
+  output_device: default
+  sample_rate: 16000
+
+logging:
+  level: info
+  format: json                     # json | console
+  conversation_log_path: ./logs/conversations
+  metrics_log_path: ./logs/metrics

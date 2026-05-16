@@ -1,0 +1,50 @@
+# Example: Piper TTS backend instead of Kokoro.
+# Differs from the default only in the tts block.
+
+stt:
+  backend: parakeet_onnx
+  model: nvidia/parakeet-tdt-1.1b
+  device: cuda
+  language: en
+
+tts:
+  backend: piper
+  voice: en_US-lessac-medium
+  device: cuda
+
+vad:
+  backend: silero
+  threshold: 0.5
+
+turn_detection:
+  backend: smart_turn_v3
+  device: cpu
+
+llm:
+  base_url: http://llm-server:8000/v1
+  model: qwen3-30b-a3b-instruct
+  api_key_env: LLM_API_KEY
+  timeout_seconds: 30
+  max_retries: 1
+
+simulator:
+  backend: mock
+  real:
+    host: 127.0.0.1
+    port: 9100
+    connect_timeout_seconds: 2
+  mock:
+    initial_heading: 0
+    initial_engine_order: stop
+    log_commands: true
+
+audio:
+  input_device: default
+  output_device: default
+  sample_rate: 16000
+
+logging:
+  level: info
+  format: json
+  conversation_log_path: ./logs/conversations
+  metrics_log_path: ./logs/metrics
