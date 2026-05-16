@@ -16,7 +16,9 @@ name = "virtual-helmsman"
 version = "0.1.0"
 description = "Modular local voice agent for a ship simulator (NVIDIA client, remote LLM)"
 readme = "README.md"
-requires-python = ">=3.11"
+# Upper bound is real: kokoro-onnx (default TTS) and pythonnet have no
+# Python 3.14 wheels as of May 2026. Develop on Python 3.13.
+requires-python = ">=3.11,<3.14"
 
 dependencies = [
     # Orchestration + first-party backends (Silero VAD, Kokoro/Piper TTS,
