@@ -1,0 +1,60 @@
+# Versions pinned as of May 2026. After the first successful install on the
+# target CUDA client, lock the full transitive set with `pip freeze` / a
+# lockfile for reproducible deploys.
+#
+# onnxruntime note: the `silero` Pipecat extra pulls CPU `onnxruntime`. This
+# project also needs `onnxruntime-gpu` for the Parakeet-ONNX STT CUDA EP.
+# Installing both can conflict — on the CUDA client install `onnxruntime-gpu`
+# and let it satisfy the runtime. See README "CUDA setup".
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "virtual-helmsman"
+version = "0.1.0"
+description = "Modular local voice agent for a ship simulator (NVIDIA client, remote LLM)"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    # Orchestration + first-party backends (Silero VAD, Kokoro/Piper TTS,
+    # Whisper STT, OpenAI-compatible LLM, local smart-turn, local audio).
+    "pipecat-ai[silero,kokoro,piper,whisper,openai,local-smart-turn,local]==1.2.1",
+    # Config, logging.
+    "pydantic==2.11.0",
+    "pyyaml==6.0.2",
+    "structlog==25.4.0",
+    # Parakeet-ONNX STT (default STT backend): in-process ASR via ONNX Runtime.
+    "onnx-asr>=0.6.0,<1.0",
+    "onnxruntime-gpu==1.26.0",
+    "numpy>=2.0,<3.0",
+    # Real simulator backend: loads the managed .NET DLL via pythonnet.
+    # Windows-only; the mock backend has no such dependency.
+    'pythonnet==3.0.5 ; sys_platform == "win32"',
+]
+
+[project.optional-dependencies]
+# parakeet_nemo STT backend. Heavy, optional — parakeet_onnx is the default.
+nemo = ["nemo-toolkit[asr]>=2.0"]
+dev = [
+    "pytest==8.3.5",
+    "pytest-asyncio==0.25.3",
+    "ruff==0.9.10",
+    "mypy==1.15.0",
+]
+
+[project.scripts]
+virtual-helmsman = "voice_agent.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["voice_agent"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
