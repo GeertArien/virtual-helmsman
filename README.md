@@ -36,36 +36,54 @@ Built on [Pipecat](https://docs.pipecat.ai). Tool handlers call into a
 
 ## CUDA setup
 
-1. Install a recent NVIDIA driver and the CUDA runtime compatible with
-   `onnxruntime-gpu` 1.26 (CUDA 12.x).
-2. `onnxruntime-gpu` provides the CUDA Execution Provider used by the
-   Parakeet-ONNX STT backend. Verify after install:
-   ```
-   python -c "import onnxruntime as ort; print(ort.get_available_providers())"
-   ```
-   `CUDAExecutionProvider` must be listed.
-3. **onnxruntime conflict:** Pipecat's `silero` extra pulls CPU `onnxruntime`,
+1. Install a recent NVIDIA driver (CUDA 12.x capable). The CUDA runtime and
+   cuDNN themselves are **not** installed system-wide — they come from the
+   `cuda` extra (see Installation) as venv-local pip wheels, and
+   `voice_agent/_cuda.py` adds them to the DLL search path at import time.
+2. **onnxruntime conflict:** Pipecat's `silero` extra pulls CPU `onnxruntime`,
    while this project also installs `onnxruntime-gpu`. They share the
-   `onnxruntime` import name. On the CUDA client, ensure `onnxruntime-gpu` is
-   the one that wins (install/last or `pip uninstall onnxruntime`).
+   `onnxruntime` import name and clobber each other. On the CUDA client, after
+   installing, force the GPU build to win:
+   ```
+   pip uninstall -y onnxruntime onnxruntime-gpu
+   pip install onnxruntime-gpu==1.26.0
+   ```
+3. Verify the CUDA execution provider actually loads (a session, not just the
+   provider list — the list shows `CUDAExecutionProvider` even when its DLLs
+   are missing):
+   ```
+   python -c "import voice_agent, onnxruntime as ort, numpy as np; \
+   from onnx import helper, TensorProto; \
+   g=helper.make_graph([helper.make_node('Add',['X','X'],['Y'])],'g', \
+   [helper.make_tensor_value_info('X',TensorProto.FLOAT,[2])], \
+   [helper.make_tensor_value_info('Y',TensorProto.FLOAT,[2])]); \
+   m=helper.make_model(g,opset_imports=[helper.make_opsetid('',17)]); m.ir_version=10; \
+   s=ort.InferenceSession(m.SerializeToString(),providers=['CUDAExecutionProvider']); \
+   print(s.get_providers())"
+   ```
+   `CUDAExecutionProvider` must appear in the printed list.
 
 ## Installation
 
 ```bash
 py -3.13 -m venv .venv
 .venv\Scripts\activate            # Windows
-pip install -e ".[dev]"           # core + dev tools (pytest, ruff, mypy)
+pip install -e ".[dev,cuda]"      # core + dev tools + CUDA runtime wheels
 ```
+
+On the NVIDIA client always include the `cuda` extra; then resolve the
+onnxruntime conflict as described in **CUDA setup** above.
 
 Optional extras:
 
 | Extra        | Adds                                  | When                                   |
 |--------------|---------------------------------------|----------------------------------------|
+| `cuda`       | `nvidia-*-cu12` (CUDA 12.x + cuDNN 9) | Running the ONNX models on the GPU      |
 | `real-sim`   | `pythonnet`                           | Integrating the real simulator backend |
 | `nemo`       | `nemo-toolkit[asr]`                   | Using the `parakeet_nemo` STT backend  |
 
 ```bash
-pip install -e ".[dev,real-sim]"  # for real-simulator integration (Windows)
+pip install -e ".[dev,cuda,real-sim]"  # for real-simulator integration (Windows)
 ```
 
 Versions are pinned in `pyproject.toml` as of May 2026. After the first

@@ -43,11 +43,23 @@ dependencies = [
 real-sim = ['pythonnet>=3.0.5 ; sys_platform == "win32"']
 # parakeet_nemo STT backend. Heavy, optional — parakeet_onnx is the default.
 nemo = ["nemo-toolkit[asr]>=2.0"]
+# CUDA 12.x runtime + cuDNN 9.x for onnxruntime-gpu, as venv-local pip wheels
+# (no system-wide CUDA toolkit). Required on the NVIDIA client; the DLLs are
+# made discoverable by voice_agent/_cuda.py. nvrtc/nvjitlink arrive as deps.
+cuda = [
+    'nvidia-cuda-runtime-cu12==12.9.79 ; sys_platform == "win32"',
+    'nvidia-cublas-cu12==12.9.2.10 ; sys_platform == "win32"',
+    'nvidia-cudnn-cu12==9.22.0.52 ; sys_platform == "win32"',
+    'nvidia-cufft-cu12==11.4.1.4 ; sys_platform == "win32"',
+    'nvidia-curand-cu12==10.3.10.19 ; sys_platform == "win32"',
+]
 dev = [
     "pytest==8.3.5",
     "pytest-asyncio==0.25.3",
     "ruff==0.9.10",
     "mypy==1.15.0",
+    # Used only to build a tiny model for the CUDA-provider check in the README.
+    "onnx==1.21.0",
 ]
 
 [project.scripts]
