@@ -27,6 +27,16 @@ class EngineOrder(str, Enum):
     FULL_AHEAD = "full_ahead"
 
 
+class SimulatorError(Exception):
+    """Raised when a simulator backend cannot complete an operation.
+
+    Tool handlers catch this to surface a short spoken failure phrase
+    ("Lost contact with bridge") instead of crashing the pipeline. The mock
+    backend never raises it; the real backend raises it on connection loss,
+    timeouts, and wrapper errors.
+    """
+
+
 @dataclass(slots=True)
 class ShipState:
     """A snapshot of the ship's navigational state.
