@@ -1,18 +1,29 @@
 """Parakeet-TDT STT via ONNX Runtime CUDA EP (default STT backend).
 
-Wraps an ``onnx-asr`` Parakeet model in a custom Pipecat ``STTService``. Pipecat
-ships no in-process Parakeet service (its first-party Parakeet support targets
-the NVIDIA Riva server), so this backend is hand-wrapped per the project brief.
+Wraps an ``onnx-asr`` Parakeet model in a custom Pipecat
+``SegmentedSTTService``. Pipecat ships no in-process Parakeet service (its
+first-party Parakeet support targets the NVIDIA Riva server), so this backend
+is hand-wrapped per the project brief.
+
+``SegmentedSTTService`` is used (not the plain continuous ``STTService``) so
+Parakeet runs once per *utterance*: the base class buffers audio, and on the
+``VADUserStoppedSpeakingFrame`` (pushed upstream by the user aggregator's VAD
+controller) it hands :meth:`run_stt` one complete WAV-format segment. A
+continuous ``STTService`` would instead transcribe every ~20 ms audio chunk,
+including silence — which yields a stream of garbage transcripts.
 """
 
 from __future__ import annotations
 
+import io
+import wave
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import numpy as np
 from pipecat.frames.frames import ErrorFrame, Frame, TranscriptionFrame
-from pipecat.services.stt_service import STTService
+from pipecat.services.settings import STTSettings
+from pipecat.services.stt_service import SegmentedSTTService
 from pipecat.utils.time import time_now_iso8601
 
 from voice_agent.backends.stt.base import to_language
@@ -26,7 +37,7 @@ def _providers(device: str) -> list[str]:
     return ["CPUExecutionProvider"]
 
 
-class ParakeetOnnxSTTService(STTService):
+class ParakeetOnnxSTTService(SegmentedSTTService):
     """Parakeet-TDT speech-to-text via ``onnx-asr`` on ONNX Runtime."""
 
     def __init__(
@@ -37,7 +48,12 @@ class ParakeetOnnxSTTService(STTService):
         language: str = "en",
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
+        # Provide a complete settings store so the base class does not warn
+        # about NOT_GIVEN model/language fields.
+        super().__init__(
+            settings=STTSettings(model=model, language=to_language(language)),
+            **kwargs,
+        )
         self._log = get_logger("stt")
         self._language = to_language(language)
         self._model_name = model
@@ -55,14 +71,27 @@ class ParakeetOnnxSTTService(STTService):
         return asr
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame | None, None]:
-        # Incoming audio is 16-bit mono PCM at the transport sample rate (16 kHz).
-        samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32) / 32768.0
+        # SegmentedSTTService hands us one complete utterance as a WAV-format
+        # buffer (header + 16-bit mono PCM at the transport sample rate).
+        try:
+            with wave.open(io.BytesIO(audio), "rb") as wav:
+                pcm = wav.readframes(wav.getnframes())
+        except (wave.Error, EOFError) as exc:
+            self._log.error("stt_decode_failed", backend="parakeet_onnx", error=str(exc))
+            yield ErrorFrame(f"Parakeet-ONNX STT failed to decode audio: {exc}")
+            return
+
+        samples = np.frombuffer(pcm, dtype=np.int16).astype(np.float32) / 32768.0
+        if samples.size == 0:
+            return
+
         try:
             text = self._asr.recognize(samples)
         except Exception as exc:
             self._log.error("stt_failed", backend="parakeet_onnx", error=str(exc))
             yield ErrorFrame(f"Parakeet-ONNX STT failed: {exc}")
             return
+
         text = (text or "").strip()
         if text:
             self._log.info("stt_transcript", backend="parakeet_onnx", text=text)

@@ -12,6 +12,10 @@ def build_vad(config: Any) -> SileroVADAnalyzer:
     """Build the Silero VAD analyzer from the ``vad`` config block.
 
     The config ``threshold`` maps to ``VADParams.confidence`` (minimum voice
-    detection confidence). Timing fields keep Pipecat defaults.
+    detection confidence); ``stop_secs`` is the silence the VAD waits out
+    before declaring speech ended. ``start_secs``/``min_volume`` keep Pipecat
+    defaults.
     """
-    return SileroVADAnalyzer(params=VADParams(confidence=config.threshold))
+    return SileroVADAnalyzer(
+        params=VADParams(confidence=config.threshold, stop_secs=config.stop_secs)
+    )

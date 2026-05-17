@@ -48,6 +48,10 @@ class TtsConfig(_Base):
 class VadConfig(_Base):
     backend: Literal["silero"] = "silero"
     threshold: float = 0.5
+    # Silence (seconds) before speech is considered ended. Pipecat's default of
+    # 0.2 is aggressive enough to split a command at the pauses between words;
+    # a longer value keeps a paused-but-continuing utterance as one segment.
+    stop_secs: float = 0.8
 
 
 class TurnConfig(_Base):

@@ -27,6 +27,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from voice_agent.actions.processor import JsonActionProcessor
@@ -80,12 +81,16 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
     # --- context aggregator (carries VAD + turn detection) --------------
     # No tools are declared: the agent uses JSON structured output, not native
     # tool calls (a small local model emits constrained JSON far more reliably).
+    # AlwaysUserMuteStrategy suppresses STT input while the bot is speaking, so
+    # the agent does not transcribe its own TTS as a phantom command (the local
+    # mic-and-speaker setup has no hardware echo cancellation).
     context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
     context_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=vad,
             user_turn_strategies=UserTurnStrategies(stop=[turn_stop_strategy]),
+            user_mute_strategies=[AlwaysUserMuteStrategy()],
         ),
     )
 

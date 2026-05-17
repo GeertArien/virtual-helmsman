@@ -17,6 +17,7 @@ tts:
 vad:
   backend: silero
   threshold: 0.5
+  stop_secs: 0.8        # silence before a turn ends; raise if commands get split
 
 turn_detection:
   backend: smart_turn_v3           # smart_turn_v3 | vad_only
