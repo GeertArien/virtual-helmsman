@@ -30,8 +30,9 @@ def build_llm(config: Any) -> OpenAILLMService:
     )
     # Local OpenAI-compatible servers often need no key; the OpenAI client still
     # requires a non-empty string, so fall back to a placeholder.
+    # The model goes through Settings — the bare `model=` kwarg is deprecated.
     return OpenAILLMService(
         api_key=api_key or "not-needed",
         base_url=config.base_url,
-        model=config.model,
+        settings=OpenAILLMService.Settings(model=config.model),
     )
