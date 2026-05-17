@@ -6,8 +6,9 @@
 > entry point — read it first.
 
 Status as of 2026-05-17: the agent has been brought up on the target NVIDIA
-client and reworked from LLM tool calls to JSON structured output. The build
-and the no-audio path are verified; a live spoken run is the main thing left.
+client and reworked from LLM tool calls to JSON structured output. Phase 1 (a
+live spoken run) is **done** — the full mic→speakers pipeline works against the
+mock simulator. Latency (Phase 2) is the main thing left.
 
 ## Verified on the client
 
@@ -25,29 +26,39 @@ and the no-audio path are verified; a live spoken run is the main thing left.
   (LLM → JSON action → mock simulator). A 49/49 hit-rate benchmark of the
   prompt + `response_format` schema constraint was clean across all action
   types, English and Dutch.
+- **Live spoken run** — verified 2026-05-17 against the mock simulator: 10
+  spoken commands → 10 correct actions, no phantom turns. Three live-run bugs
+  were found and fixed (see Phase 1 below).
 
 ## Not yet verified
 
-- **A live spoken run.** `python -m voice_agent.main` has never been driven with
-  a real microphone — STT on live audio, VAD/turn endpointing, TTS playback, and
-  audio-device selection are unexercised.
-- **All latency numbers.** No `voice_to_voice_ms` has been measured. The local
-  LLM with partial RAM offload is the prime suspect for blowing the 800 ms
-  budget.
+- **All latency numbers.** Measured `voice_to_voice_ms` is ~2000 ms (range
+  1500–2986) — well over the 800 ms budget. No per-component p50/p95 yet. The
+  local LLM with partial RAM offload is the prime suspect.
 
 ---
 
-## Phase 1 — Live spoken run
+## Phase 1 — Live spoken run — DONE (2026-05-17)
 
-Goal: `python -m voice_agent.main --config config.yaml` runs end to end,
-mic → speakers, against the mock simulator.
+`python -m voice_agent.main --config config.yaml` runs end to end, mic →
+speakers, against the mock simulator. Three bugs were found and fixed during
+the first live runs:
 
-1. Confirm LM Studio is up with Nemotron loaded and thinking disabled.
-2. Run it; speak a few orders ("steer course two seven zero", "all ahead full",
-   "what is our heading"). Confirm the helmsman executes and replies in speech.
-3. Watch for: the OS default mic/speakers being the intended devices (see the
-   device-mapping gap below); STT accuracy on spoken digits; turn endpointing
-   feeling responsive.
+1. **STT was not VAD-segmented.** `ParakeetOnnxSTTService` extended the
+   continuous `STTService`, which transcribes every ~20 ms audio chunk — so it
+   hallucinated garbage (a stream of `"M"`) on idle audio. It now extends
+   `SegmentedSTTService`; `run_stt` decodes the WAV-format segment the base
+   class hands it once per utterance.
+2. **VAD `stop_secs` was 0.2 s** (Pipecat default) — short enough to split a
+   command at the natural pauses between words. It is now a `vad.stop_secs`
+   config field, default 0.8.
+3. **The agent transcribed its own TTS.** The local mic/speaker setup has no
+   echo cancellation, so spoken replies came back in as phantom commands. Fixed
+   with `AlwaysUserMuteStrategy` in `LLMUserAggregatorParams` — it mutes STT
+   input while the bot speaks (this also disables barge-in, acceptable here).
+
+Pre-req that bit us first: the Windows default mic had been disabled in
+Settings (it captured pure silence). Re-enable the mic device before a run.
 
 ## Phase 2 — Latency
 
@@ -61,6 +72,25 @@ mic → speakers, against the mock simulator.
 
 ## Phase 3 — Known gaps
 
+- **Dutch replies sound like gibberish.** The LLM sometimes replies in Dutch
+  (even to an English command), but the Kokoro voice `af_bella` is American
+  English and Kokoro-82M ships no Dutch voice at all (en/es/fr/hi/it/ja/pt/zh
+  only) — Dutch text comes out as mangled phonemes. Deferred by decision on
+  2026-05-17. Fix later by either forcing English-only replies (tighten the
+  prompt — it still *understands* Dutch orders) or switching `tts.backend` to
+  `piper`, which has Dutch `nl_*` voices, and picking the voice by reply
+  language.
+- **Spoken response can contradict the action.** Observed once: "two seven
+  zero" set heading 270 correctly, but the spoken line parroted an earlier
+  "zero nine zero" from the context history. The action JSON is
+  schema-constrained and reliable; the free-text `response` is not. A
+  small-model artifact — revisit with prompt tweaks if it recurs.
+- **ConversationLogger writes nothing.** `logs/conversations/` stayed empty
+  after a full spoken session (per-turn metrics logging works). The observer is
+  wired into the pipeline but produces no files — needs debugging.
+- **Un-awaited STT coroutine warning.** Segmented STT logs a RuntimeWarning
+  ("coroutine 'STTService._ttfb_timeout_handler' was never awaited") — a
+  Pipecat internal interaction with `SegmentedSTTService`; non-fatal.
 - **Latency-frame semantics** — `JsonActionProcessor` buffers the LLM's real
   response and emits a fresh `LLMText`/`...End` frame triple after parsing, so
   `LatencyTracker` stamps `llm_first_token_ts` at *that* point. `llm_ttft_ms` is
