@@ -1,9 +1,11 @@
-# Default config: Parakeet-1.1B / Kokoro / Silero / smart_turn_v3 / mock simulator.
+# Default config: Parakeet-0.6B / Kokoro / Silero / smart_turn_v3 / mock simulator.
 # Env vars override values here: LLM_BASE_URL, LLM_API_KEY, SIMULATOR_BACKEND.
 
 stt:
   backend: parakeet_onnx          # parakeet_onnx | parakeet_nemo | whisper
-  model: nvidia/parakeet-tdt-1.1b
+  # onnx-asr model name. It ships only the 0.6b Parakeet variants (no 1.1b):
+  # nemo-parakeet-tdt-0.6b-v2 (English) | nemo-parakeet-tdt-0.6b-v3 (multilingual).
+  model: nemo-parakeet-tdt-0.6b-v2
   device: cuda
   language: en
 
@@ -21,14 +23,14 @@ turn_detection:
   device: cpu
 
 llm:
-  base_url: http://llm-server:8000/v1
-  model: qwen3-30b-a3b-instruct
-  api_key_env: LLM_API_KEY         # optional, read from env
+  base_url: http://localhost:1234/v1   # LM Studio's OpenAI-compatible server
+  model: nvidia/nemotron-3-nano-4b
+  api_key_env: LLM_API_KEY         # optional; LM Studio needs no key
   timeout_seconds: 30
   max_retries: 1
-  system_prompt_prefix: ""         # model-specific control tokens prepended to
-                                   # the system prompt. NVIDIA Nemotron:
-                                   # "detailed thinking off"; Qwen3: "/no_think"
+  # Nemotron supports tool calling only with reasoning disabled; this also
+  # keeps first-token latency within the voice-to-voice budget.
+  system_prompt_prefix: "detailed thinking off"
 
 simulator:
   backend: mock                    # real | mock  (mock is the dev default)
