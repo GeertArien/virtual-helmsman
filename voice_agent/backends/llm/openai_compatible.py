@@ -18,8 +18,12 @@ from pipecat.services.openai.llm import OpenAILLMService
 from voice_agent.logging_setup import get_logger
 
 
-def build_llm(config: Any) -> OpenAILLMService:
-    """Build the OpenAI-compatible LLM service from the ``llm`` config block."""
+def build_llm(config: Any, *, extra: dict[str, Any] | None = None) -> OpenAILLMService:
+    """Build the OpenAI-compatible LLM service from the ``llm`` config block.
+
+    ``extra`` is merged verbatim into every chat-completion request — the caller
+    uses it to pass server-specific params such as ``response_format``.
+    """
     log = get_logger("llm")
     api_key = config.resolved_api_key()
     log.info(
@@ -34,5 +38,5 @@ def build_llm(config: Any) -> OpenAILLMService:
     return OpenAILLMService(
         api_key=api_key or "not-needed",
         base_url=config.base_url,
-        settings=OpenAILLMService.Settings(model=config.model),
+        settings=OpenAILLMService.Settings(model=config.model, extra=extra or {}),
     )

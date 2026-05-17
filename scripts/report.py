@@ -44,14 +44,9 @@ def main() -> None:
     # Recompute from per-turn records so the report works even if the session
     # ended without writing its summary line.
     by_metric: dict[str, list[float]] = {}
-    tool_latencies: list[float] = []
     for rec in per_turn:
         for name, value in rec["metrics_ms"].items():
             by_metric.setdefault(name, []).append(value)
-        for call in rec.get("tool_calls", []):
-            tool_latencies.append(call["tool_latency_ms"])
-    if tool_latencies:
-        by_metric["tool_latency_ms"] = tool_latencies
 
     print(f"Metrics file : {path}")
     print(f"Turns        : {len(per_turn)}")

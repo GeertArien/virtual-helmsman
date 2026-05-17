@@ -1,20 +1,18 @@
-"""Smoke test: full LLM-to-tool-to-simulator path, no audio, no real sim.
+"""Smoke test: full LLM -> JSON action -> simulator path, no audio.
 
 Seeds the user utterance "steer course two seven zero" into the LLM context,
-runs a minimal pipeline (context aggregator -> remote LLM -> aggregator) with
-the three ship tools registered against a ``MockSimulatorClient``, triggers the
-LLM with an ``LLMRunFrame``, and asserts the LLM emits ``set_heading`` with
-``degrees ~= 270`` and that the mock's ``command_history`` records it.
+runs a minimal pipeline (user aggregator -> LLM -> JsonActionProcessor ->
+assistant aggregator) against a ``MockSimulatorClient``, triggers the LLM with
+an ``LLMRunFrame``, and asserts the processor parsed the JSON response,
+dispatched ``set_heading`` with ``degrees ~= 270``, and the mock recorded it.
 
-Note: the brief describes injecting a fake ``TranscriptionFrame``. With Pipecat
-1.2.x's universal context aggregator, a bare ``TranscriptionFrame`` is buffered
-into a pending user turn and only reaches the LLM once a VAD-driven turn
-completes — which cannot happen on this no-audio path. So the utterance is
-seeded straight into the context (the equivalent of a finalized transcript) and
-the LLM is triggered explicitly. The exercised path — LLM -> tool -> simulator
-— is unchanged.
+The utterance is seeded straight into the context (the equivalent of a
+finalized transcript): with Pipecat 1.2.x's universal aggregator a bare
+``TranscriptionFrame`` is buffered into a pending turn that never completes
+without audio. The exercised path -- LLM -> JSON action -> simulator -- is the
+same one the live pipeline uses.
 
-Requires a reachable remote LLM ($LLM_BASE_URL / config.yaml ``llm.base_url``).
+Requires a reachable LLM ($LLM_BASE_URL / config.yaml ``llm.base_url``).
 Run from the repo root:
 
     python scripts/smoke.py [--config config.yaml]
@@ -36,13 +34,13 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
 )
 
+from voice_agent.actions.processor import JsonActionProcessor
+from voice_agent.actions.prompt import SYSTEM_PROMPT
+from voice_agent.actions.schema import RESPONSE_FORMAT
 from voice_agent.backends.llm.openai_compatible import build_llm
 from voice_agent.backends.simulator.mock import MockSimulatorClient
 from voice_agent.config import load_config
 from voice_agent.logging_setup import configure_logging, new_session_id
-from voice_agent.pipeline import build_system_prompt
-from voice_agent.tools.schemas import build_tools_schema
-from voice_agent.tools.ship import register_ship_tools
 
 _UTTERANCE = "steer course two seven zero"
 _EXPECTED_DEG = 270
@@ -54,17 +52,16 @@ async def _smoke(config_path: str) -> bool:
     configure_logging(config.logging, new_session_id())
 
     mock = MockSimulatorClient(log_commands=True)
-    llm = build_llm(config.llm)
-    register_ship_tools(llm, mock)
+    llm = build_llm(config.llm, extra={"response_format": RESPONSE_FORMAT})
+    json_action = JsonActionProcessor(simulator=mock)
 
-    context = LLMContext(
-        [{"role": "system", "content": build_system_prompt(config.llm)}],
-        build_tools_schema(),
-    )
+    context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
     context.add_message({"role": "user", "content": _UTTERANCE})
 
     aggregator = LLMContextAggregatorPair(context)
-    pipeline = Pipeline([aggregator.user(), llm, aggregator.assistant()])
+    pipeline = Pipeline(
+        [aggregator.user(), llm, json_action, aggregator.assistant()]
+    )
     task = PipelineTask(pipeline)
 
     runner = PipelineRunner()

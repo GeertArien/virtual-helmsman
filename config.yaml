@@ -28,9 +28,6 @@ llm:
   api_key_env: LLM_API_KEY         # optional; LM Studio needs no key
   timeout_seconds: 30
   max_retries: 1
-  # Nemotron supports tool calling only with reasoning disabled; this also
-  # keeps first-token latency within the voice-to-voice budget.
-  system_prompt_prefix: "detailed thinking off"
 
 simulator:
   backend: mock                    # real | mock  (mock is the dev default)

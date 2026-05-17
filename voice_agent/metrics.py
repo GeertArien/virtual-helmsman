@@ -6,7 +6,7 @@ Two Pipecat ``FrameProcessor`` s, both inserted into the pipeline:
   writes one JSONL record per turn to ``logs/metrics/<session_id>.jsonl``, and
   on session end appends a p50/p95/p99 summary.
 * :class:`ConversationLogger` writes one JSONL object per conversation event
-  (user transcript, tool call, tool result, assistant reply) to
+  (user transcript, assistant reply) to
   ``logs/conversations/<session_id>.jsonl``.
 
 Latency math uses ``time.monotonic()`` (immune to wall-clock jumps); the wall
@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,8 +26,6 @@ from pipecat.frames.frames import (
     CancelFrame,
     EndFrame,
     Frame,
-    FunctionCallInProgressFrame,
-    FunctionCallResultFrame,
     InterimTranscriptionFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
@@ -85,7 +83,6 @@ class TurnMetrics:
     llm_last_token_ts: float | None = None
     tts_first_audio_ts: float | None = None
     tts_last_audio_ts: float | None = None
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
     def derived_ms(self) -> dict[str, float]:
         """Compute the derived ``*_ms`` metrics from stamped timestamps."""
@@ -125,7 +122,6 @@ class LatencyTracker(FrameProcessor):
         self._turn_index = 0
         self._turn: TurnMetrics | None = None
         self._completed: list[TurnMetrics] = []
-        self._pending_tools: dict[str, float] = {}
         self._summary_written = False
 
     def _ensure_turn(self) -> TurnMetrics:
@@ -159,20 +155,6 @@ class LatencyTracker(FrameProcessor):
         elif isinstance(frame, TTSStoppedFrame):
             self._ensure_turn().tts_last_audio_ts = now
             self._finalize_turn()
-        elif isinstance(frame, FunctionCallInProgressFrame):
-            self._pending_tools[getattr(frame, "tool_call_id", "")] = now
-        elif isinstance(frame, FunctionCallResultFrame):
-            turn = self._ensure_turn()
-            call_id = getattr(frame, "tool_call_id", "")
-            start = self._pending_tools.pop(call_id, now)
-            turn.tool_calls.append(
-                {
-                    "name": getattr(frame, "function_name", "") or "",
-                    "tool_call_start_ts": start,
-                    "tool_call_end_ts": now,
-                    "tool_latency_ms": round((now - start) * 1000, 1),
-                }
-            )
         elif isinstance(frame, (EndFrame, CancelFrame)):
             self._finalize_session()
 
@@ -192,7 +174,6 @@ class LatencyTracker(FrameProcessor):
                 "session_id": self._session_id,
                 "turn_index": turn.turn_index,
                 "metrics_ms": derived,
-                "tool_calls": turn.tool_calls,
             }
         )
         self._log.info(
@@ -206,15 +187,11 @@ class LatencyTracker(FrameProcessor):
             return
         self._summary_written = True
         by_metric: dict[str, list[float]] = {name: [] for name in _DERIVED}
-        tool_latencies: list[float] = []
         for turn in self._completed:
             for name, value in turn.derived_ms().items():
                 by_metric[name].append(value)
-            tool_latencies.extend(tc["tool_latency_ms"] for tc in turn.tool_calls)
 
         summary = {name: percentiles(values) for name, values in by_metric.items()}
-        if tool_latencies:
-            summary["tool_latency_ms"] = percentiles(tool_latencies)
         self._writer.write(
             {
                 "ts": _iso_now(),
@@ -248,22 +225,6 @@ class ConversationLogger(FrameProcessor):
 
         if isinstance(frame, TranscriptionFrame):
             self._emit({"role": "user", "transcript": frame.text})
-        elif isinstance(frame, FunctionCallInProgressFrame):
-            self._emit(
-                {
-                    "role": "tool_call",
-                    "name": getattr(frame, "function_name", ""),
-                    "arguments": getattr(frame, "arguments", {}),
-                }
-            )
-        elif isinstance(frame, FunctionCallResultFrame):
-            self._emit(
-                {
-                    "role": "tool_result",
-                    "name": getattr(frame, "function_name", ""),
-                    "result": getattr(frame, "result", None),
-                }
-            )
         elif isinstance(frame, LLMFullResponseStartFrame):
             self._assistant_parts = []
         elif isinstance(frame, LLMTextFrame):
