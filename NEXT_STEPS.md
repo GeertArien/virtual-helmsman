@@ -3,77 +3,77 @@
 > **Session name: `virtual-helmsman-build`**
 > Resume with `claude --resume` in `D:\dev\virtual-helmsman` (pick the session
 > for this work) or `claude -c` to continue the most recent. This file is the
-> entry point — read it first, then work the phases in order.
+> entry point — read it first.
 
-Status at end of scaffold/implementation session (2026-05-16): all code, tests,
-scripts, and docs are written and committed; 49 unit tests pass; `ruff` is
-clean; every Pipecat 1.2.1 import/constructor used is verified against the
-installed package. **Nothing has yet run on real hardware** — no GPU, no remote
-LLM, and no audio device were available this session. Work the phases below in
-order; each phase gates the next.
+Status as of 2026-05-17: the agent has been brought up on the target NVIDIA
+client and reworked from LLM tool calls to JSON structured output. The build
+and the no-audio path are verified; a live spoken run is the main thing left.
 
-## Verified vs. unverified
+## Verified on the client
 
-**Verified this session:** `pip install -e .[dev]` on Python 3.13; all imports
-resolve; 49 unit tests pass; `ruff` clean; `report.py` runs on synthetic data;
-constructor signatures for STT/TTS/VAD/turn/LLM/transport/pipeline classes.
+- **Environment** — `.venv` on Python 3.13.13; `pip install -e ".[dev,cuda]"`.
+  59 unit tests pass, `ruff` clean.
+- **CUDA** — `onnxruntime-gpu` 1.26 loads the CUDA execution provider. The CUDA
+  12.x runtime + cuDNN 9 ship as venv-local `nvidia-*-cu12` wheels (the `cuda`
+  extra); `voice_agent/_cuda.py` puts them on the DLL search path at import.
+- **Pipeline build** — `build_pipeline()` loads Parakeet-0.6b STT, Kokoro TTS,
+  Silero VAD, and smart-turn v3 onto CUDA; models download on first run.
+- **LLM** — local LM Studio serving NVIDIA Nemotron 3 Nano 4B at
+  `http://localhost:1234/v1`. Reasoning/thinking is disabled in the LM Studio
+  per-model settings (no API toggle worked; the setting persists across loads).
+- **JSON action path** — `scripts/smoke.py` passes end to end
+  (LLM → JSON action → mock simulator). A 49/49 hit-rate benchmark of the
+  prompt + `response_format` schema constraint was clean across all action
+  types, English and Dutch.
 
-**Not yet verified (needs the target client):** full pipeline run, model
-downloads, CUDA execution, audio I/O, the remote LLM path, and all latency
-numbers. The bench scripts and `smoke.py` have never executed.
+## Not yet verified
+
+- **A live spoken run.** `python -m voice_agent.main` has never been driven with
+  a real microphone — STT on live audio, VAD/turn endpointing, TTS playback, and
+  audio-device selection are unexercised.
+- **All latency numbers.** No `voice_to_voice_ms` has been measured. The local
+  LLM with partial RAM offload is the prime suspect for blowing the 800 ms
+  budget.
 
 ---
 
-## Phase 1 — Validate the pipeline on the CUDA client (mock simulator)
+## Phase 1 — Live spoken run
 
-Goal: `python -m voice_agent.main` runs end to end with the default config
-(mock simulator), mic → speakers.
+Goal: `python -m voice_agent.main --config config.yaml` runs end to end,
+mic → speakers, against the mock simulator.
 
-1. Install on the client: `py -3.13 -m venv .venv` then `pip install -e ".[dev]"`.
-2. Confirm the GPU runtime: `python -c "import onnxruntime as ort; print(ort.get_available_providers())"`
-   must list `CUDAExecutionProvider`. Both `onnxruntime` (CPU) and
-   `onnxruntime-gpu` install — make sure the GPU one wins (README "CUDA setup").
-3. `pytest` on the client — should stay 49/49.
-4. `python -m voice_agent.main --config config.yaml`. First run downloads the
-   Parakeet, Kokoro, Silero, and smart-turn models.
-5. Watch specifically for (assumptions not yet exercised):
-   - **onnx-asr model id** — `config.yaml` `stt.model: nvidia/parakeet-tdt-1.1b`
-     is passed straight to `onnx_asr.load_model()`. onnx-asr may expect a
-     different identifier (e.g. its own model name, or the
-     `istupakov/parakeet-tdt-1.1b-onnx` repo). Adjust `stt.model` if it fails.
-     File: `voice_agent/backends/stt/parakeet_onnx.py`.
-   - **TTS `Settings`** — `KokoroTTSService.Settings(voice=...)` /
-     `PiperTTSService.Settings(voice=...)`: the nested classes exist, but
-     construction with `voice=` was not exercised. Files:
-     `voice_agent/backends/tts/{kokoro,piper}.py`.
-   - **LocalAudioTransport** opens the OS default audio device — confirm the
-     right mic/speakers are selected (see Phase 3, device mapping).
+1. Confirm LM Studio is up with Nemotron loaded and thinking disabled.
+2. Run it; speak a few orders ("steer course two seven zero", "all ahead full",
+   "what is our heading"). Confirm the helmsman executes and replies in speech.
+3. Watch for: the OS default mic/speakers being the intended devices (see the
+   device-mapping gap below); STT accuracy on spoken digits; turn endpointing
+   feeling responsive.
 
-## Phase 2 — End-to-end smoke and latency
+## Phase 2 — Latency
 
-1. `python scripts/smoke.py` against a reachable `$LLM_BASE_URL` — confirms the
-   LLM → tool → simulator path. Expect `PASS`.
-2. `python scripts/bench_stt.py` and `python scripts/bench_tts.py` per backend.
-3. Run a representative spoken session, then
+1. `python scripts/bench_stt.py` and `python scripts/bench_tts.py` per backend.
+2. Run a representative spoken session, then
    `python scripts/report.py logs/metrics/<session_id>.jsonl`.
-4. Fill in the **latency table in `README.md`** with measured p50/p95.
-5. If `voice_to_voice_ms` p95 ≥ 800 ms: try `turn_detection.backend: vad_only`,
-   `stt.model: nvidia/parakeet-tdt-0.6b`, or `tts.backend: piper`, and re-measure.
+3. Fill in the **latency table in `README.md`** with measured p50/p95.
+4. If `voice_to_voice_ms` p95 ≥ 800 ms, in rough order of impact: confirm the
+   LLM is the bottleneck (more GPU offload / a smaller quant), then try
+   `turn_detection.backend: vad_only` or `tts.backend: piper`.
 
-## Phase 3 — Close the known gaps
+## Phase 3 — Known gaps
 
-- **LatencyTracker turn boundaries** — confirm `UserStoppedSpeakingFrame` and
-  `TTSStoppedFrame` actually flow to the last processor in a live run, so
-  per-turn metrics get stamped. If the universal turn machinery emits different
-  frames, adjust `voice_agent/metrics.py`.
-- **LLM timeout / max_retries** — `timeout_seconds` and `max_retries` are in the
-  config schema but not forwarded; `OpenAILLMService` exposes no hook in 1.2.1.
-  Revisit when a clean path exists. File:
-  `voice_agent/backends/llm/openai_compatible.py`.
-- **Audio device selection** — `audio.input_device` / `output_device` names are
-  accepted but not mapped to device indices. Map them via
-  `LocalAudioTransportParams(input_device_index=..., output_device_index=...)`.
-  File: `voice_agent/pipeline.py` (see the `TODO` there).
+- **Latency-frame semantics** — `JsonActionProcessor` buffers the LLM's real
+  response and emits a fresh `LLMText`/`...End` frame triple after parsing, so
+  `LatencyTracker` stamps `llm_first_token_ts` at *that* point. `llm_ttft_ms` is
+  therefore ≈ `llm_total_ms`; `voice_to_voice_ms` stays correct. Revisit if a
+  true time-to-first-token is needed.
+- **Audio device selection** — `audio.input_device` / `output_device` are
+  accepted but not mapped to device indices; the OS default is used. Map them
+  via `LocalAudioTransportParams(input_device_index=...)`. File: `pipeline.py`.
+- **LLM timeout / max_retries** — in the config schema but not forwarded;
+  `OpenAILLMService` exposes no hook in Pipecat 1.2.1.
+- **onnxruntime Memcpy warning** — Parakeet on CUDA logs "2 Memcpy nodes added";
+  a minor perf note (a couple of ops fall back to CPU). Revisit only if STT
+  latency is a problem in Phase 2.
 
 ## Phase 4 — Real simulator integration (Windows)
 
@@ -84,14 +84,15 @@ Goal: `python -m voice_agent.main` runs end to end with the default config
    `voice_agent/backends/simulator/real.py`: `_connect`, `_to_ship_state`, and
    the four `_*_sync` helpers.
 4. Run with `config.examples/config.real_sim.yaml` (or `SIMULATOR_BACKEND=real`).
-5. Add real-simulator tests mirroring `tests/test_mock_simulator.py` where
-   feasible.
+5. Add real-simulator tests mirroring `tests/test_mock_simulator.py`.
 
-## Deferred / open questions
+## Open questions
 
-- `smoke.py` seeds the LLM context directly rather than injecting a literal
-  `TranscriptionFrame` (the 1.2.x universal aggregator buffers a bare
-  transcription into a pending turn that never completes without audio).
-  Revisit if a frame-level smoke test becomes important.
-- Pinned dependency versions in `pyproject.toml` are May-2026 picks; after the
-  first good install on the client, lock the transitive set (`pip freeze`).
+- The benchmark prompt's richer command set (rudder, throttle, autopilot,
+  anchor, multi-step) was scoped out: the agent keeps the three actions the
+  `SimulatorClient` supports. Expanding it means extending the protocol *and*
+  the real simulator's capabilities.
+- LM Studio loads Nemotron with a 4096-token context. Fine for short helmsman
+  turns; bump it (`lms load -c ...` or the GUI) if a session's history grows.
+- After the first good install, lock the transitive dependency set
+  (`pip freeze`) for reproducible deploys.

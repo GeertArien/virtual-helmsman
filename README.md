@@ -1,28 +1,34 @@
 # Virtual Helmsman
 
-A modular local voice agent for a ship simulator. It listens to spoken English,
-replies in speech, and executes ship-simulator actions through remote-LLM tool
-calls — targeting **< 800 ms voice-to-voice latency** on a single NVIDIA client.
+A modular local voice agent for a ship simulator. It listens to spoken English
+or Dutch, replies in speech, and executes ship-simulator actions from the LLM's
+structured-JSON output — targeting **< 800 ms voice-to-voice latency** on a
+single NVIDIA client.
 
-STT, TTS, VAD, and turn detection run **locally on the GPU**; the LLM is a
-**remote** OpenAI-compatible endpoint. Every model and the simulator client is a
-swappable backend selected from `config.yaml` — no code edits to switch.
+STT, TTS, VAD, and turn detection run **locally on the GPU**; the LLM is an
+OpenAI-compatible endpoint (remote, or local on the client via e.g. LM Studio).
+Every model and the simulator client is a swappable backend selected from
+`config.yaml` — no code edits to switch.
 
 See [`TASK.md`](TASK.md) for the full project brief.
 
 ## Architecture
 
 ```
-mic → VAD → STT → smart-turn → LLM (remote, with tools) → TTS → speakers
-                                      │
-                                      ▼
-                                SimulatorClient
-                                (real | mock)
+mic → VAD → STT → smart-turn → LLM → JSON action → TTS → speakers
+                                          │
+                                          ▼
+                                   SimulatorClient
+                                   (real | mock)
 ```
 
-Built on [Pipecat](https://docs.pipecat.ai). Tool handlers call into a
-`SimulatorClient` abstraction with two interchangeable implementations: `real`
-(wraps the in-house UDP-syncing library) and `mock` (in-memory, the dev default).
+Built on [Pipecat](https://docs.pipecat.ai). The LLM answers each command with
+one JSON object — an `action` plus a spoken `response` — rather than native tool
+calls, which a small local model emits far less reliably. A processor parses
+that object, dispatches the action to a `SimulatorClient` abstraction, and
+forwards only the spoken response to TTS. `SimulatorClient` has two
+interchangeable implementations: `real` (wraps the in-house UDP-syncing library)
+and `mock` (in-memory, the dev default).
 
 ## Requirements
 
@@ -126,21 +132,27 @@ virtual-helmsman --config config.yaml
 The default config uses the **mock** simulator, so the full STT→LLM→TTS
 pipeline runs without a real simulator attached.
 
-## Remote LLM configuration
+## LLM configuration
 
-The LLM is never hosted by this client — it is consumed over HTTP. Point
-`llm.base_url` at the remote OpenAI-compatible `/v1` endpoint (or set
-`LLM_BASE_URL`). Set the key via the `LLM_API_KEY` env var; local servers that
-need no key still work (a placeholder key is sent).
+The LLM is consumed over HTTP from any OpenAI-compatible `/v1` endpoint —
+remote, or local on the client (e.g. LM Studio). Point `llm.base_url` at it (or
+set `LLM_BASE_URL`). Set the key via `LLM_API_KEY`; servers that need no key
+still work (a placeholder key is sent).
 
 ```yaml
 llm:
-  base_url: http://llm-server:8000/v1
-  model: qwen3-30b-a3b-instruct
+  base_url: http://localhost:1234/v1   # e.g. LM Studio's local server
+  model: nvidia/nemotron-3-nano-4b
   api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
 ```
+
+The agent sends a JSON-schema `response_format` so the server constrains output
+to the helmsman action object — the model needs structured-output support, but
+**not** tool-calling support. If the model has a reasoning/thinking mode,
+disable it: reasoning output does not reach the `content` field the agent
+parses. On a local server this is usually a per-model setting.
 
 > **Known gap:** `timeout_seconds` / `max_retries` are validated but not yet
 > forwarded to the underlying OpenAI client — `OpenAILLMService` does not
@@ -151,7 +163,7 @@ llm:
 
 ```
 logs/
-  conversations/<session_id>.jsonl   # one object per turn (user / tool / assistant)
+  conversations/<session_id>.jsonl   # one object per turn (user / assistant)
   metrics/<session_id>.jsonl         # one object per turn + a session summary
 ```
 
@@ -191,12 +203,12 @@ at scaffold time). To populate this table:
 pytest
 ```
 
-`tests/` covers tool handlers against the mock simulator, mock-simulator command
-sequences, config validation + env overrides, and factory dispatch. No tests
-make network calls or load GPU models.
+`tests/` covers action parsing/dispatch and the JSON action processor against
+the mock simulator, mock-simulator command sequences, config validation + env
+overrides, and factory dispatch. No tests make network calls or load GPU models.
 
-`scripts/smoke.py` exercises the end-to-end LLM→tool→simulator path (no audio,
-no real sim) and **requires a reachable remote LLM**.
+`scripts/smoke.py` exercises the end-to-end LLM→JSON action→simulator path (no
+audio, no real sim) and **requires a reachable LLM**.
 
 ## Integrating the real simulator
 
@@ -225,9 +237,9 @@ OS; only real-simulator integration is Windows-pinned.
 ## Project layout
 
 ```
-voice_agent/        package: config, pipeline, metrics, logging, backends, tools
+voice_agent/        package: config, pipeline, metrics, logging, backends, actions
   backends/{stt,tts,vad,turn,llm,simulator}/   swappable backends + factories
-  tools/            ship tool schemas and handlers
+  actions/          JSON action schema, parser, dispatch, processor, prompt
 scripts/            smoke, report, bench_stt, bench_tts
 tests/              unit tests (no network, no GPU)
 config.yaml         default config
