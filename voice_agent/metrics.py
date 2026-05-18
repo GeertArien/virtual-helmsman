@@ -1,12 +1,17 @@
 """Latency tracking, metrics output, and the conversation log.
 
-Two Pipecat ``FrameProcessor`` s, both inserted into the pipeline:
+Two monitors, both attached to the pipeline:
 
-* :class:`LatencyTracker` stamps per-turn timestamps as frames flow past,
-  writes one JSONL record per turn to ``logs/metrics/<session_id>.jsonl``, and
-  on session end appends a p50/p95/p99 summary.
-* :class:`ConversationLogger` writes one JSONL object per conversation event
-  (user transcript, assistant reply) to
+* :class:`LatencyTracker` is a Pipecat *observer*. It watches frames as they
+  pass between every pair of processors, stamps per-turn timestamps, writes one
+  JSONL record per turn to ``logs/metrics/<session_id>.jsonl``, and on session
+  end appends a p50/p95/p99 summary. It must be an observer, not a pipeline
+  processor: a processor only sees frames that reach its position, but the
+  ``TranscriptionFrame`` is consumed by the user aggregator and the real
+  streaming ``LLMTextFrame`` s are consumed by ``JsonActionProcessor`` — an
+  observer sees them all, at their source.
+* :class:`ConversationLogger` is a Pipecat ``FrameProcessor`` that writes one
+  JSONL object per conversation event (user transcript, assistant reply) to
   ``logs/conversations/<session_id>.jsonl``.
 
 Latency math uses ``time.monotonic()`` (immune to wall-clock jumps); the wall
@@ -17,6 +22,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,13 +39,15 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     TTSAudioRawFrame,
     TTSStoppedFrame,
-    UserStoppedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
 from voice_agent.logging_setup import get_logger
 
 # Derived metric -> (end timestamp field, start timestamp field) on TurnMetrics.
+# Note v2v = stt_latency + llm_ttft + tts_ttfa (the three are a clean partition).
 _DERIVED: dict[str, tuple[str, str]] = {
     "stt_latency_ms": ("stt_final_ts", "vad_speech_end_ts"),
     "llm_ttft_ms": ("llm_first_token_ts", "stt_final_ts"),
@@ -107,11 +115,14 @@ class _JsonlWriter:
             fh.write(json.dumps(record, default=str) + "\n")
 
 
-class LatencyTracker(FrameProcessor):
-    """Pipecat FrameProcessor that stamps per-turn latency timestamps.
+class LatencyTracker(BaseObserver):
+    """Pipecat observer that stamps per-turn latency timestamps.
 
-    A turn opens on ``UserStoppedSpeakingFrame`` and closes on
-    ``TTSStoppedFrame``; the headline metric is ``voice_to_voice_ms``.
+    A turn opens on ``VADUserStoppedSpeakingFrame`` (the user finished an
+    utterance) and closes on ``TTSStoppedFrame``; the headline metric is
+    ``voice_to_voice_ms``. Each timestamp is stamped on its *first* occurrence
+    in the turn, so the real streaming LLM frames win over the rebuilt frames
+    that ``JsonActionProcessor`` emits downstream.
     """
 
     def __init__(self, *, session_id: str, metrics_dir: Path, **kwargs: Any) -> None:
@@ -123,42 +134,63 @@ class LatencyTracker(FrameProcessor):
         self._turn: TurnMetrics | None = None
         self._completed: list[TurnMetrics] = []
         self._summary_written = False
+        # A frame crosses many processor boundaries; on_push_frame fires once
+        # per crossing. Dedupe so each frame is counted once (bounded history).
+        self._seen_order: deque[int] = deque(maxlen=512)
+        self._seen: set[int] = set()
 
-    def _ensure_turn(self) -> TurnMetrics:
-        if self._turn is None:
-            self._turn = TurnMetrics(turn_index=self._turn_index)
-        return self._turn
+    def _is_new(self, frame: Frame) -> bool:
+        """True the first time this frame id is seen; remembers it (bounded)."""
+        fid = frame.id
+        if fid in self._seen:
+            return False
+        if len(self._seen_order) == self._seen_order.maxlen:
+            self._seen.discard(self._seen_order[0])
+        self._seen_order.append(fid)
+        self._seen.add(fid)
+        return True
 
-    async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
-        await super().process_frame(frame, direction)
+    async def on_push_frame(self, data: FramePushed) -> None:
+        """Stamp per-turn timestamps as frames flow through the pipeline."""
+        if data.direction != FrameDirection.DOWNSTREAM:
+            return
+        frame = data.frame
+        if not self._is_new(frame):
+            return
         now = time.monotonic()
 
-        if isinstance(frame, UserStoppedSpeakingFrame):
+        if isinstance(frame, VADUserStoppedSpeakingFrame):
+            # A new utterance ended: open a fresh turn. Any prior turn that
+            # never reached TTSStoppedFrame is dropped (incomplete).
             self._turn = TurnMetrics(turn_index=self._turn_index)
             self._turn.vad_speech_end_ts = now
-        elif isinstance(frame, InterimTranscriptionFrame):
-            turn = self._ensure_turn()
+            return
+        if isinstance(frame, (EndFrame, CancelFrame)):
+            self._finalize_session()
+            return
+
+        turn = self._turn
+        if turn is None:
+            return
+
+        if isinstance(frame, InterimTranscriptionFrame):
             if turn.stt_first_partial_ts is None:
                 turn.stt_first_partial_ts = now
         elif isinstance(frame, TranscriptionFrame):
-            self._ensure_turn().stt_final_ts = now
+            if turn.stt_final_ts is None:
+                turn.stt_final_ts = now
         elif isinstance(frame, LLMTextFrame):
-            turn = self._ensure_turn()
             if turn.llm_first_token_ts is None:
                 turn.llm_first_token_ts = now
         elif isinstance(frame, LLMFullResponseEndFrame):
-            self._ensure_turn().llm_last_token_ts = now
+            if turn.llm_last_token_ts is None:
+                turn.llm_last_token_ts = now
         elif isinstance(frame, TTSAudioRawFrame):
-            turn = self._ensure_turn()
             if turn.tts_first_audio_ts is None:
                 turn.tts_first_audio_ts = now
         elif isinstance(frame, TTSStoppedFrame):
-            self._ensure_turn().tts_last_audio_ts = now
+            turn.tts_last_audio_ts = now
             self._finalize_turn()
-        elif isinstance(frame, (EndFrame, CancelFrame)):
-            self._finalize_session()
-
-        await self.push_frame(frame, direction)
 
     def _finalize_turn(self) -> None:
         if self._turn is None:
@@ -179,6 +211,10 @@ class LatencyTracker(FrameProcessor):
         self._log.info(
             "turn_metrics",
             turn_index=turn.turn_index,
+            stt_latency_ms=derived.get("stt_latency_ms"),
+            llm_ttft_ms=derived.get("llm_ttft_ms"),
+            llm_total_ms=derived.get("llm_total_ms"),
+            tts_ttfa_ms=derived.get("tts_ttfa_ms"),
             voice_to_voice_ms=derived.get("voice_to_voice_ms"),
         )
 

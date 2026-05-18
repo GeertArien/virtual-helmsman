@@ -3,13 +3,15 @@
 Pipeline order::
 
     transport.input() -> STT -> user aggregator -> LLM -> JsonActionProcessor
-        -> TTS -> transport.output() -> assistant aggregator
-        -> LatencyTracker -> ConversationLogger
+        -> TTS -> transport.output() -> assistant aggregator -> ConversationLogger
 
 The LLM answers each command with a JSON object (see
 :mod:`voice_agent.actions.schema`); :class:`JsonActionProcessor` parses it,
 dispatches the action to the simulator, and forwards only the spoken response
-to TTS. The two observer processors sit last so they see the full frame flow.
+to TTS. :class:`LatencyTracker` is attached as a Pipecat *observer* (not a
+pipeline processor) so it can see frames consumed mid-pipeline — the
+``TranscriptionFrame`` and the real streaming ``LLMTextFrame`` s never reach
+the pipeline tail.
 
 VAD and turn detection are wired into the **user context aggregator** (Pipecat
 1.2.x) via ``LLMUserAggregatorParams``. The transport itself just streams audio.
@@ -94,7 +96,9 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
         ),
     )
 
-    # --- observers ------------------------------------------------------
+    # --- monitors -------------------------------------------------------
+    # LatencyTracker is an observer (sees every frame at its source);
+    # ConversationLogger is a tail processor.
     latency_tracker = LatencyTracker(
         session_id=session_id,
         metrics_dir=config.logging.metrics_log_path,
@@ -114,13 +118,12 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
             tts,
             transport.output(),
             context_aggregator.assistant(),
-            latency_tracker,
             conversation_logger,
         ]
     )
     # Interruption handling lives in the turn strategies (VADUserTurnStartStrategy
     # enables interruptions by default), not in PipelineParams.
-    task = PipelineTask(pipeline)
+    task = PipelineTask(pipeline, observers=[latency_tracker])
 
     log.info(
         "pipeline_built",
