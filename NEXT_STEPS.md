@@ -91,11 +91,6 @@ Settings (it captured pure silence). Re-enable the mic device before a run.
 - **Un-awaited STT coroutine warning.** Segmented STT logs a RuntimeWarning
   ("coroutine 'STTService._ttfb_timeout_handler' was never awaited") — a
   Pipecat internal interaction with `SegmentedSTTService`; non-fatal.
-- **Latency-frame semantics** — `JsonActionProcessor` buffers the LLM's real
-  response and emits a fresh `LLMText`/`...End` frame triple after parsing, so
-  `LatencyTracker` stamps `llm_first_token_ts` at *that* point. `llm_ttft_ms` is
-  therefore ≈ `llm_total_ms`; `voice_to_voice_ms` stays correct. Revisit if a
-  true time-to-first-token is needed.
 - **Audio device selection** — `audio.input_device` / `output_device` are
   accepted but not mapped to device indices; the OS default is used. Map them
   via `LocalAudioTransportParams(input_device_index=...)`. File: `pipeline.py`.
