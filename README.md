@@ -240,11 +240,27 @@ OS; only real-simulator integration is Windows-pinned.
 voice_agent/        package: config, pipeline, metrics, logging, backends, actions
   backends/{stt,tts,vad,turn,llm,simulator}/   swappable backends + factories
   actions/          JSON action schema, parser, dispatch, processor, prompt
+  api/              optional FastAPI + WebSocket control plane for the frontend
 scripts/            smoke, report, bench_stt, bench_tts
 tests/              unit tests (no network, no GPU)
+frontend/           SvelteKit dashboard (subscribes to /ws/events; see frontend/README.md)
 config.yaml         default config
 config.examples/    backend-variant configs
 ```
+
+## Frontend
+
+A live dashboard that subscribes to the voice agent over WebSocket lives in
+[`frontend/`](frontend/) (SvelteKit + TypeScript). Enable the control plane
+in `config.yaml`:
+
+```yaml
+api:
+  enabled: true
+```
+
+…then `cd frontend && npm install && npm run dev`. See
+[`frontend/README.md`](frontend/README.md) for details.
 
 ## Non-goals (v1)
 
