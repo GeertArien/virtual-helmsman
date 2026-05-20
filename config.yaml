@@ -51,3 +51,10 @@ logging:
   format: json                     # json | console
   conversation_log_path: ./logs/conversations
   metrics_log_path: ./logs/metrics
+
+api:
+  enabled: false                   # set true to expose /api + /ws to the frontend
+  host: 127.0.0.1
+  port: 8765
+  cors_allow_origins:              # add the Vite dev origin when developing the UI
+    - "*"

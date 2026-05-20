@@ -102,6 +102,17 @@ class LoggingConfig(_Base):
     metrics_log_path: Path = Path("./logs/metrics")
 
 
+class ApiConfig(_Base):
+    """Control/observability API for the frontend. Disabled by default."""
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8765
+    # CORS origins for the frontend. Wildcard is fine for local dev; tighten
+    # to e.g. ["http://localhost:5173"] (Vite default) for stricter setups.
+    cors_allow_origins: list[str] = Field(default_factory=lambda: ["*"])
+
+
 class AppConfig(_Base):
     """Top-level config object, the single source of truth for the agent."""
 
@@ -113,6 +124,7 @@ class AppConfig(_Base):
     simulator: SimulatorConfig = Field(default_factory=SimulatorConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
