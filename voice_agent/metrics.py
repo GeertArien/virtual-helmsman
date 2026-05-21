@@ -44,6 +44,7 @@ from pipecat.frames.frames import (
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
+from voice_agent.api.events import EventBus, TurnMetricsEvent
 from voice_agent.logging_setup import get_logger
 
 # Derived metric -> (end timestamp field, start timestamp field) on TurnMetrics.
@@ -125,7 +126,14 @@ class LatencyTracker(BaseObserver):
     that ``JsonActionProcessor`` emits downstream.
     """
 
-    def __init__(self, *, session_id: str, metrics_dir: Path, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        session_id: str,
+        metrics_dir: Path,
+        event_bus: EventBus | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._log = get_logger("metrics")
         self._session_id = session_id
@@ -134,6 +142,7 @@ class LatencyTracker(BaseObserver):
         self._turn: TurnMetrics | None = None
         self._completed: list[TurnMetrics] = []
         self._summary_written = False
+        self._event_bus = event_bus
         # A frame crosses many processor boundaries; on_push_frame fires once
         # per crossing. Dedupe so each frame is counted once (bounded history).
         self._seen_order: deque[int] = deque(maxlen=512)
@@ -217,6 +226,10 @@ class LatencyTracker(BaseObserver):
             tts_ttfa_ms=derived.get("tts_ttfa_ms"),
             voice_to_voice_ms=derived.get("voice_to_voice_ms"),
         )
+        if self._event_bus is not None:
+            self._event_bus.publish(
+                TurnMetricsEvent(turn_index=turn.turn_index, metrics_ms=derived)
+            )
 
     def _finalize_session(self) -> None:
         if self._summary_written:

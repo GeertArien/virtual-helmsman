@@ -35,6 +35,7 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from voice_agent.actions.processor import JsonActionProcessor
 from voice_agent.actions.prompt import SYSTEM_PROMPT
 from voice_agent.actions.schema import RESPONSE_FORMAT
+from voice_agent.api.events import EventBus, UserTranscriptObserver
 from voice_agent.backends.llm.openai_compatible import build_llm
 from voice_agent.backends.simulator.base import SimulatorClient
 from voice_agent.backends.simulator.factory import create_simulator
@@ -54,6 +55,7 @@ class BuiltPipeline:
     task: PipelineTask
     simulator: SimulatorClient
     session_id: str
+    event_bus: EventBus | None
 
 
 def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
@@ -75,10 +77,15 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
         LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
     )
 
+    # --- event bus (frontend observability) -----------------------------
+    # Created only when the API is enabled. Processors/observers below take
+    # ``event_bus=None`` as a no-op, keeping the agent runnable headless.
+    event_bus: EventBus | None = EventBus() if config.api.enabled else None
+
     # --- simulator + action processor -----------------------------------
     # One SimulatorClient, built once, driven by the JSON action processor.
     simulator = create_simulator(config.simulator)
-    json_action = JsonActionProcessor(simulator=simulator)
+    json_action = JsonActionProcessor(simulator=simulator, event_bus=event_bus)
 
     # --- context aggregator (carries VAD + turn detection) --------------
     # No tools are declared: the agent uses JSON structured output, not native
@@ -98,15 +105,20 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
 
     # --- monitors -------------------------------------------------------
     # LatencyTracker is an observer (sees every frame at its source);
-    # ConversationLogger is a tail processor.
+    # ConversationLogger is a tail processor. UserTranscriptObserver is
+    # attached only when the event bus is live -- its sole job is publishing.
     latency_tracker = LatencyTracker(
         session_id=session_id,
         metrics_dir=config.logging.metrics_log_path,
+        event_bus=event_bus,
     )
     conversation_logger = ConversationLogger(
         session_id=session_id,
         conversation_dir=config.logging.conversation_log_path,
     )
+    observers = [latency_tracker]
+    if event_bus is not None:
+        observers.append(UserTranscriptObserver(event_bus=event_bus))
 
     pipeline = Pipeline(
         [
@@ -123,7 +135,11 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
     )
     # Interruption handling lives in the turn strategies (VADUserTurnStartStrategy
     # enables interruptions by default), not in PipelineParams.
-    task = PipelineTask(pipeline, observers=[latency_tracker])
+    # idle_timeout_secs=None disables Pipecat's 5-minute idle cancel -- a
+    # helmsman is silent between commands, and long stretches of quiet should
+    # not tear the pipeline down (also matters for the monitor-only frontend
+    # workflow, where the user is watching but not necessarily speaking).
+    task = PipelineTask(pipeline, observers=observers, idle_timeout_secs=None)
 
     log.info(
         "pipeline_built",
@@ -134,5 +150,8 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
         turn=config.turn_detection.backend,
         simulator=config.simulator.backend,
         llm_model=config.llm.model,
+        api_enabled=config.api.enabled,
     )
-    return BuiltPipeline(task=task, simulator=simulator, session_id=session_id)
+    return BuiltPipeline(
+        task=task, simulator=simulator, session_id=session_id, event_bus=event_bus
+    )

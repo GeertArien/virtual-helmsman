@@ -8,6 +8,10 @@ reaches TTS or the conversation context.
 
 The LLM's ``LLMFullResponseStartFrame`` / ``LLMTextFrame`` / ``...EndFrame``
 triple is consumed and replaced with a fresh triple carrying the spoken line.
+
+If an :class:`~voice_agent.api.events.EventBus` is provided, the processor also
+publishes one event per turn so the frontend can render the conversation: the
+assistant reply, the action dispatched (or refused), and the new ship state.
 """
 
 from __future__ import annotations
@@ -22,8 +26,23 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 
-from voice_agent.actions.dispatch import dispatch_action
-from voice_agent.actions.schema import ActionParseError, parse_response
+from voice_agent.actions.dispatch import DispatchResult, dispatch_action
+from voice_agent.actions.schema import (
+    ActionParseError,
+    ErrorAction,
+    GetShipStateAction,
+    HelmsmanResponse,
+    SetEngineTelegraphAction,
+    SetHeadingAction,
+    parse_response,
+)
+from voice_agent.api.events import (
+    ActionDispatchedEvent,
+    ActionRefusedEvent,
+    AssistantReplyEvent,
+    EventBus,
+    ShipStateEvent,
+)
 from voice_agent.backends.simulator.base import SimulatorClient
 from voice_agent.logging_setup import get_logger
 
@@ -34,9 +53,16 @@ UNPARSEABLE = "Sorry sir, I did not catch that order. Please say again."
 class JsonActionProcessor(FrameProcessor):
     """Parse the LLM's JSON response, run the action, speak the acknowledgement."""
 
-    def __init__(self, *, simulator: SimulatorClient, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        *,
+        simulator: SimulatorClient,
+        event_bus: EventBus | None = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(**kwargs)
         self._simulator = simulator
+        self._event_bus = event_bus
         self._log = get_logger("actions")
         self._parts: list[str] = []
         self._capturing = False
@@ -75,6 +101,62 @@ class JsonActionProcessor(FrameProcessor):
             parsed = parse_response(raw)
         except ActionParseError as exc:
             self._log.warning("action_parse_failed", error=str(exc), raw=raw[:300])
+            self._publish_reply(UNPARSEABLE)
             return UNPARSEABLE
         result = await dispatch_action(parsed, self._simulator)
-        return result.spoken.strip() or UNPARSEABLE
+        spoken = result.spoken.strip() or UNPARSEABLE
+        self._publish_turn_events(parsed, result, spoken)
+        return spoken
+
+    def _publish_reply(self, text: str) -> None:
+        if self._event_bus is not None:
+            self._event_bus.publish(AssistantReplyEvent(text=text))
+
+    def _publish_turn_events(
+        self, parsed: HelmsmanResponse, result: DispatchResult, spoken: str
+    ) -> None:
+        """Push the assistant reply, the action (or refusal), and the ship state.
+
+        Order matters for the UI: the reply lands first so the conversation
+        view updates immediately; the action and ship-state follow so a heading
+        change is visibly tied to the line the helmsman just spoke.
+        """
+        if self._event_bus is None:
+            return
+
+        self._event_bus.publish(AssistantReplyEvent(text=spoken))
+
+        action = parsed.action
+        if isinstance(action, ErrorAction):
+            self._event_bus.publish(
+                ActionRefusedEvent(
+                    error_type=action.error_type,
+                    reason=action.reason,
+                    suggestion=action.suggestion,
+                )
+            )
+            return
+
+        details: dict[str, Any]
+        if isinstance(action, SetHeadingAction):
+            details = {"degrees": action.degrees % 360}
+        elif isinstance(action, SetEngineTelegraphAction):
+            details = {"order": action.order.value}
+        elif isinstance(action, GetShipStateAction):
+            details = {}
+        else:  # pragma: no cover -- discriminated union is exhaustive
+            details = {}
+
+        self._event_bus.publish(
+            ActionDispatchedEvent(action=action.type, details=details)
+        )
+
+        state = result.ship_state
+        if state is not None:
+            self._event_bus.publish(
+                ShipStateEvent(
+                    heading_deg=state.heading_deg,
+                    speed_kn=state.speed_kn,
+                    engine_order=state.engine_order.value,
+                )
+            )
