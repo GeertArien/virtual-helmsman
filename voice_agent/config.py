@@ -113,6 +113,35 @@ class ApiConfig(_Base):
     cors_allow_origins: list[str] = Field(default_factory=lambda: ["*"])
 
 
+class DocumentsConfig(_Base):
+    """Qdrant + n8n document management. All fields optional -- when a field
+    is missing the corresponding endpoint returns HTTP 503 with a clear
+    "configure documents.<field>" message rather than failing silently.
+
+    The qdrant payload field names are configurable because different
+    ingestion pipelines store metadata under different keys; defaults match
+    the common "document_id / title / source / uploaded_at" convention.
+    """
+
+    # n8n webhook the upload endpoint forwards multipart/form-data to.
+    n8n_upload_webhook: str | None = None
+    # qdrant REST base URL (e.g. "http://127.0.0.1:6333"), collection name,
+    # and the env var holding the qdrant API key (if any).
+    qdrant_url: str | None = None
+    qdrant_collection: str | None = None
+    qdrant_api_key_env: str = "QDRANT_API_KEY"
+    # Payload field names used to group points into documents.
+    document_id_field: str = "document_id"
+    title_field: str = "title"
+    source_field: str = "source"
+    uploaded_at_field: str = "uploaded_at"
+    # Hard cap on points scrolled when listing documents -- keeps the listing
+    # call bounded for large collections. Increase if you genuinely have more.
+    scroll_limit: int = 10000
+    # Request timeout (seconds) for outbound calls to qdrant and n8n.
+    request_timeout_seconds: float = 30.0
+
+
 class AppConfig(_Base):
     """Top-level config object, the single source of truth for the agent."""
 
@@ -125,6 +154,7 @@ class AppConfig(_Base):
     audio: AudioConfig = Field(default_factory=AudioConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
+    documents: DocumentsConfig = Field(default_factory=DocumentsConfig)
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:

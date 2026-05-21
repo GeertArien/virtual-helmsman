@@ -48,6 +48,7 @@ async def _maybe_start_api(config: AppConfig, built: BuiltPipeline) -> ApiServer
             config, built.session_id, datetime.now(timezone.utc).isoformat()
         ),
         cors_allow_origins=config.api.cors_allow_origins,
+        documents=config.documents,
     )
     server = ApiServer(app, host=config.api.host, port=config.api.port)
     await server.start()

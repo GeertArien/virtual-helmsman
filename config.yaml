@@ -58,3 +58,26 @@ api:
   port: 8765
   cors_allow_origins:              # add the Vite dev origin when developing the UI
     - "*"
+
+# Qdrant + n8n document management for the frontend's /documents page.
+# Each endpoint returns HTTP 503 with a clear message until the relevant
+# fields below are populated -- so the frontend can start up before all
+# integrations are wired.
+documents:
+  # n8n webhook (multipart/form-data POST with `file` + optional `title`).
+  # n8n_upload_webhook: "http://localhost:5678/webhook/ingest-document"
+
+  # Qdrant REST endpoint and the collection that holds the document chunks.
+  # qdrant_url: "http://127.0.0.1:6333"
+  # qdrant_collection: "documents"
+  qdrant_api_key_env: QDRANT_API_KEY      # ignored if the env var is unset
+
+  # Payload field names used to group points into "documents" and to filter
+  # the delete call. Change these to match the ingestion pipeline's schema.
+  document_id_field: document_id
+  title_field: title
+  source_field: source
+  uploaded_at_field: uploaded_at
+
+  scroll_limit: 10000              # hard cap on points scanned by /api/documents
+  request_timeout_seconds: 30

@@ -16,13 +16,17 @@ production.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from typing import AsyncIterator
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
+from voice_agent.config import DocumentsConfig
 from voice_agent.logging_setup import get_logger
 
 
@@ -49,15 +53,38 @@ def create_app(
     event_bus: EventBus,
     session: SessionInfo,
     cors_allow_origins: list[str] | None = None,
+    documents: DocumentsConfig | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to a live ``event_bus`` and session.
 
     The app holds no global state -- everything closes over the arguments.
     Re-creating the app per session is therefore cheap and isolation between
     sessions is clean.
+
+    Passing ``documents`` mounts the qdrant management routes; when omitted
+    only the monitor endpoints are exposed (the frontend's /documents page
+    will then see 404s rather than configuration errors).
     """
-    app = FastAPI(title="virtual-helmsman", version="0.1.0")
     log = get_logger("api")
+
+    # The documents router owns a long-lived httpx.AsyncClient that must be
+    # closed at shutdown. We build it before the app so the lifespan handler
+    # can reference it without an attribute dance.
+    docs_router: APIRouter | None = None
+    if documents is not None:
+        docs_router = create_documents_router(documents)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            if docs_router is not None:
+                client = getattr(docs_router, "_http_client", None)
+                if client is not None:
+                    await client.aclose()
+
+    app = FastAPI(title="virtual-helmsman", version="0.1.0", lifespan=lifespan)
 
     app.add_middleware(
         CORSMiddleware,
@@ -65,6 +92,9 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    if docs_router is not None:
+        app.include_router(docs_router)
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
