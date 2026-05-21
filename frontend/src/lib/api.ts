@@ -1,6 +1,8 @@
 /**
  * Backend API client: typed event union mirroring `voice_agent.api.events`,
- * plus a small WebSocket helper with auto-reconnect.
+ * plus a small WebSocket helper with auto-reconnect, plus the typed REST
+ * client for the qdrant document-management endpoints (proxied through the
+ * Python backend at /api/documents/*).
  *
  * The discriminated union on `kind` lets components narrow with a single
  * `switch` rather than instanceof / structural checks.
@@ -93,6 +95,109 @@ export async function fetchSession(): Promise<SessionInfo> {
   if (!res.ok) throw new Error(`/api/session: HTTP ${res.status}`);
   return (await res.json()) as SessionInfo;
 }
+
+// --- Documents (qdrant management) ------------------------------------------
+
+/** One document known to qdrant. `chunk_count` is the number of vector points
+ *  that share this document_id (i.e., what gets deleted). */
+export interface DocumentInfo {
+  document_id: string;
+  title: string | null;
+  source: string | null;
+  chunk_count: number;
+  /** Best-effort upload timestamp (ISO 8601). Null when payload didn't carry one. */
+  uploaded_at: string | null;
+}
+
+export interface DocumentListResponse {
+  documents: DocumentInfo[];
+}
+
+/** Returned by POST /api/documents/upload. `status` is the workflow's
+ *  acknowledgement; with human-in-the-loop n8n flows the actual ingestion
+ *  happens asynchronously after a reviewer approves. */
+export interface UploadResponse {
+  status: 'accepted' | 'queued' | 'completed';
+  document_id?: string;
+  message?: string;
+}
+
+export interface DeleteResponse {
+  status: 'deleted';
+  document_id: string;
+  deleted_chunks: number;
+}
+
+/** Friendly Error subclass so UI can show server messages without leaking
+ *  raw fetch internals. The backend's 4xx/5xx body (when JSON) is preserved
+ *  on `.detail` for components that want to render it. */
+export class ApiError extends Error {
+  status: number;
+  detail: unknown;
+  constructor(status: number, message: string, detail: unknown = null) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
+async function readError(res: Response): Promise<ApiError> {
+  let detail: unknown = null;
+  let message = `HTTP ${res.status}`;
+  try {
+    const ct = res.headers.get('content-type') ?? '';
+    if (ct.includes('application/json')) {
+      detail = await res.json();
+      // FastAPI default error shape: { detail: "..." } or { detail: [...] }
+      if (detail && typeof detail === 'object' && 'detail' in detail) {
+        const d = (detail as { detail: unknown }).detail;
+        if (typeof d === 'string') message = d;
+      }
+    } else {
+      const text = await res.text();
+      if (text) message = text;
+    }
+  } catch {
+    // ignore -- the bare HTTP code message is fine
+  }
+  return new ApiError(res.status, message, detail);
+}
+
+/** GET /api/documents -- list distinct documents currently in the collection. */
+export async function listDocuments(): Promise<DocumentInfo[]> {
+  const res = await fetch(`${backendUrl()}/api/documents`);
+  if (!res.ok) throw await readError(res);
+  const body = (await res.json()) as DocumentListResponse;
+  return body.documents;
+}
+
+/** POST /api/documents/upload -- forward a file to the n8n ingestion workflow.
+ *  Sent as multipart/form-data with the file under `file` and the optional
+ *  title under `title`. */
+export async function uploadDocument(file: File, title?: string): Promise<UploadResponse> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (title) form.append('title', title);
+  const res = await fetch(`${backendUrl()}/api/documents/upload`, {
+    method: 'POST',
+    body: form
+  });
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as UploadResponse;
+}
+
+/** DELETE /api/documents/{document_id} -- remove all chunks for one document. */
+export async function deleteDocument(documentId: string): Promise<DeleteResponse> {
+  const res = await fetch(
+    `${backendUrl()}/api/documents/${encodeURIComponent(documentId)}`,
+    { method: 'DELETE' }
+  );
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as DeleteResponse;
+}
+
+// --- WebSocket --------------------------------------------------------------
 
 export type ConnectionState = 'connecting' | 'open' | 'closed';
 

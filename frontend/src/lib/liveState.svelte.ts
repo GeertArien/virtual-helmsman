@@ -1,0 +1,90 @@
+/**
+ * App-wide live agent state, owned at the layout level so it survives route
+ * changes (no WS reconnect when navigating between /, /documents, etc.).
+ *
+ * The single $state object is mutated by the WebSocket handler; components
+ * read its fields directly. Treat the returned `live` proxy as the single
+ * source of truth for live data -- do not duplicate fields into local state.
+ */
+
+import { EventStream, fetchSession } from './api';
+import type {
+  AgentEvent,
+  ConnectionState,
+  SessionInfo,
+  ShipStateEvent,
+  TurnMetricsEvent
+} from './api';
+import type { Entry } from './components/conversation';
+
+/** Bounded conversation log so a long-running session doesn't grow forever. */
+const MAX_ENTRIES = 500;
+/** Bounded metrics history (~200 turns ≈ many minutes of conversation). */
+const MAX_TURNS = 200;
+
+export const live = $state({
+  connection: 'connecting' as ConnectionState,
+  session: null as SessionInfo | null,
+  entries: [] as Entry[],
+  shipState: null as ShipStateEvent | null,
+  turnMetrics: [] as TurnMetricsEvent[]
+});
+
+let stream: EventStream | null = null;
+
+function append(entry: Entry) {
+  const next = live.entries.concat(entry);
+  live.entries = next.length > MAX_ENTRIES ? next.slice(-MAX_ENTRIES) : next;
+}
+
+function actionLabel(action: string, details: Record<string, unknown>): string {
+  if (action === 'set_heading' && 'degrees' in details) return `set_heading ${details.degrees}°`;
+  if (action === 'set_engine_telegraph' && 'order' in details) return `engine ${details.order}`;
+  return action;
+}
+
+function onEvent(ev: AgentEvent) {
+  switch (ev.kind) {
+    case 'transcript':
+      append({ kind: 'user', ts: ev.ts, text: ev.text });
+      break;
+    case 'assistant_reply':
+      append({ kind: 'assistant', ts: ev.ts, text: ev.text });
+      break;
+    case 'action_dispatched':
+      append({
+        kind: 'action',
+        ts: ev.ts,
+        label: actionLabel(ev.action, ev.details),
+        ok: true
+      });
+      break;
+    case 'action_refused':
+      append({ kind: 'refused', ts: ev.ts, reason: ev.reason });
+      break;
+    case 'ship_state':
+      live.shipState = ev;
+      break;
+    case 'turn_metrics':
+      live.turnMetrics = live.turnMetrics.concat(ev).slice(-MAX_TURNS);
+      break;
+  }
+}
+
+/**
+ * Idempotently open the event stream and start refreshing session info.
+ * Safe to call from +layout.svelte's onMount; repeated calls are no-ops.
+ * Returns a cleanup function the caller can wire into onMount's teardown.
+ */
+export function startLiveStream(): () => void {
+  if (stream) return () => {};
+  fetchSession()
+    .then((info) => (live.session = info))
+    .catch((err) => console.warn('GET /api/session failed', err));
+  stream = new EventStream(onEvent, (s) => (live.connection = s));
+  stream.connect();
+  return () => {
+    stream?.close();
+    stream = null;
+  };
+}

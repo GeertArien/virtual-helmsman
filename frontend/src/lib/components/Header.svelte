@@ -1,11 +1,26 @@
 <script lang="ts">
   import type { ConnectionState, SessionInfo } from '$lib/api';
 
-  let { session, state }: { session: SessionInfo | null; state: ConnectionState } = $props();
+  let {
+    session,
+    state,
+    active
+  }: { session: SessionInfo | null; state: ConnectionState; active: string } = $props();
 
   const stateLabel = $derived(
     state === 'open' ? 'connected' : state === 'connecting' ? 'connecting…' : 'disconnected'
   );
+
+  type NavLink = { href: string; label: string };
+  const links: NavLink[] = [
+    { href: '/', label: 'Monitor' },
+    { href: '/documents', label: 'Documents' }
+  ];
+
+  function isActive(href: string): boolean {
+    if (href === '/') return active === '/' || active === '';
+    return active === href || active.startsWith(href + '/');
+  }
 </script>
 
 <header>
@@ -13,6 +28,13 @@
     <span class="badge" data-state={state} title={stateLabel}></span>
     <h1>Virtual Helmsman</h1>
     <span class="state mono">{stateLabel}</span>
+    <nav aria-label="Primary">
+      {#each links as link (link.href)}
+        <a href={link.href} class:active={isActive(link.href)} aria-current={isActive(link.href) ? 'page' : undefined}>
+          {link.label}
+        </a>
+      {/each}
+    </nav>
   </div>
   <dl class="meta">
     {#if session}
@@ -48,6 +70,23 @@
   }
   .badge[data-state='open'] { background: var(--good); box-shadow: 0 0 8px var(--good); }
   .badge[data-state='connecting'] { background: var(--warn); }
+  nav {
+    display: flex;
+    gap: 0.25rem;
+    margin-left: 1rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--border);
+  }
+  nav a {
+    color: var(--fg-muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 4px;
+    line-height: 1;
+  }
+  nav a:hover { color: var(--fg); background: var(--bg-elev-2); }
+  nav a.active { color: var(--fg); background: var(--bg-elev-2); box-shadow: inset 0 -2px 0 var(--accent); }
   .meta { display: flex; flex-wrap: wrap; gap: 0.5rem 1.25rem; margin: 0; }
   .meta div { display: flex; align-items: baseline; gap: 0.4rem; }
   dt { color: var(--fg-muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em; }
