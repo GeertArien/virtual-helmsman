@@ -251,15 +251,30 @@ config.examples/    backend-variant configs
 ## Frontend
 
 A live dashboard that subscribes to the voice agent over WebSocket lives in
-[`frontend/`](frontend/) (SvelteKit + TypeScript). Enable the control plane
-in `config.yaml`:
+[`frontend/`](frontend/) (SvelteKit + TypeScript). Two pages:
+
+- **Monitor** (`/`) — live transcript, ship state, and per-turn latency.
+- **Documents** (`/documents`) — upload a file to the n8n ingestion workflow
+  (with human-in-the-loop review), or delete every chunk of a document from
+  qdrant. Both routes are proxied through `/api/documents/*` on the Python
+  backend so the qdrant API key never reaches the browser.
+
+Enable the control plane and (optionally) the qdrant management routes in
+`config.yaml`:
 
 ```yaml
 api:
   enabled: true
+documents:
+  n8n_upload_webhook: "http://localhost:5678/webhook/ingest-document"
+  qdrant_url: "http://127.0.0.1:6333"
+  qdrant_collection: "documents"
 ```
 
-…then `cd frontend && npm install && npm run dev`. See
+Each `documents.*` field is optional — endpoints return HTTP 503 with a
+"configure documents.<field>" message until you set them, so the frontend
+boots before all integrations are wired. Then
+`cd frontend && npm install && npm run dev`. See
 [`frontend/README.md`](frontend/README.md) for details.
 
 ## Non-goals (v1)
