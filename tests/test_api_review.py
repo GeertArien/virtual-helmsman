@@ -180,7 +180,7 @@ def test_upload_falls_back_to_config_defaults(monkeypatch: pytest.MonkeyPatch) -
         default_document_type="PDF",
         default_collection_name="my_coll",
         default_categories="algemeen",
-        default_chunking_strategy="llm_semantic",
+        default_chunking_strategy="fixed_size",
     )
     app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
     with TestClient(app) as c:
@@ -194,7 +194,7 @@ def test_upload_falls_back_to_config_defaults(monkeypatch: pytest.MonkeyPatch) -
     assert forwarded["Document_Type"] == "PDF"
     assert forwarded["Collection_Name"] == "my_coll"
     assert forwarded["Categories"] == "algemeen"
-    assert forwarded["Chunking_Strategy"] == "llm_semantic"
+    assert forwarded["Chunking_Strategy"] == "fixed_size"
 
 
 def test_upload_502s_when_n8n_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:

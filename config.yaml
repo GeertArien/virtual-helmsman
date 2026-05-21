@@ -92,5 +92,5 @@ review:
   default_document_type: PDF
   default_collection_name: maritime_hybrid
   default_categories: algemeen
-  default_chunking_strategy: paragraph_aware   # | fixed_size | llm_semantic
+  default_chunking_strategy: paragraph_aware   # | fixed_size
   request_timeout_seconds: 60

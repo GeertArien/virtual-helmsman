@@ -173,7 +173,7 @@ class ReviewConfig(_Base):
     default_collection_name: str = "maritime_hybrid"
     default_categories: str = "algemeen"
     default_chunking_strategy: Literal[
-        "paragraph_aware", "fixed_size", "llm_semantic"
+        "paragraph_aware", "fixed_size"
     ] = "paragraph_aware"
     # Request timeout (seconds) for outbound calls to n8n.
     request_timeout_seconds: float = 60.0

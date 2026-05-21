@@ -153,7 +153,6 @@
           <select bind:value={chunkingStrategy}>
             <option value="paragraph_aware">paragraph_aware (default)</option>
             <option value="fixed_size">fixed_size</option>
-            <option value="llm_semantic">llm_semantic</option>
           </select>
         </label>
       </div>

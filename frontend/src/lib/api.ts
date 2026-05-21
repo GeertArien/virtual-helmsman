@@ -224,7 +224,7 @@ export interface UploadFields {
   document_type?: string;
   collection_name?: string;
   categories?: string;
-  chunking_strategy?: 'paragraph_aware' | 'fixed_size' | 'llm_semantic';
+  chunking_strategy?: 'paragraph_aware' | 'fixed_size';
 }
 
 export async function uploadForReview(
