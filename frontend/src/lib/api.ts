@@ -113,15 +113,6 @@ export interface DocumentListResponse {
   documents: DocumentInfo[];
 }
 
-/** Returned by POST /api/documents/upload. `status` is the workflow's
- *  acknowledgement; with human-in-the-loop n8n flows the actual ingestion
- *  happens asynchronously after a reviewer approves. */
-export interface UploadResponse {
-  status: 'accepted' | 'queued' | 'completed';
-  document_id?: string;
-  message?: string;
-}
-
 export interface DeleteResponse {
   status: 'deleted';
   document_id: string;
@@ -172,21 +163,6 @@ export async function listDocuments(): Promise<DocumentInfo[]> {
   return body.documents;
 }
 
-/** POST /api/documents/upload -- forward a file to the n8n ingestion workflow.
- *  Sent as multipart/form-data with the file under `file` and the optional
- *  title under `title`. */
-export async function uploadDocument(file: File, title?: string): Promise<UploadResponse> {
-  const form = new FormData();
-  form.append('file', file, file.name);
-  if (title) form.append('title', title);
-  const res = await fetch(`${backendUrl()}/api/documents/upload`, {
-    method: 'POST',
-    body: form
-  });
-  if (!res.ok) throw await readError(res);
-  return (await res.json()) as UploadResponse;
-}
-
 /** DELETE /api/documents/{document_id} -- remove all chunks for one document. */
 export async function deleteDocument(documentId: string): Promise<DeleteResponse> {
   const res = await fetch(
@@ -195,6 +171,102 @@ export async function deleteDocument(documentId: string): Promise<DeleteResponse
   );
   if (!res.ok) throw await readError(res);
   return (await res.json()) as DeleteResponse;
+}
+
+// --- Review (n8n HITL chunk-review proxy) -----------------------------------
+
+/** A chunk awaiting human review. `text` is the chunk's content; `metadata`
+ *  is whatever the ingestion pipeline attached. The UI surfaces a subset
+ *  (page, chunk_length, document_summary). */
+export interface ReviewChunk {
+  chunk_id: string;
+  text: string;
+  metadata: Record<string, unknown>;
+}
+
+/** One batch of chunks waiting for review. The backend strips the n8n
+ *  `resume_url` -- submit decisions via `submitDecisions(batch_id, ...)`. */
+export interface PendingBatch {
+  batch_id: string;
+  filename: string;
+  collection_name: string;
+  created_at: string;
+  pending_chunk_count: number;
+  chunks: ReviewChunk[];
+}
+
+export interface PendingResponse {
+  total_pending_batches: number;
+  batches: PendingBatch[];
+}
+
+export interface ReviewUploadResponse {
+  status: string;
+  message: string;
+}
+
+/** Per-chunk decision. `approve` is the default for omitted chunks; the
+ *  backend forwards this verbatim to the n8n resume URL. */
+export interface ChunkDecision {
+  chunk_id: string;
+  action: 'approve' | 'reject' | 'edit';
+  /** Required when action is "edit". Must be ≥ 50 chars after trim or n8n
+   *  silently drops the chunk -- enforce on the client. */
+  edited_text?: string;
+  /** Free-text reason, optional. Not persisted in v1. */
+  reason?: string;
+}
+
+/** POST /api/review/upload -- forward a file + metadata to the n8n ingestion
+ *  workflow. Returns 202-equivalent ack; the batch appears in the pending
+ *  list after a few seconds of background chunking. */
+export interface UploadFields {
+  document_type?: string;
+  collection_name?: string;
+  categories?: string;
+  chunking_strategy?: 'paragraph_aware' | 'fixed_size' | 'llm_semantic';
+}
+
+export async function uploadForReview(
+  file: File,
+  fields: UploadFields = {}
+): Promise<ReviewUploadResponse> {
+  const form = new FormData();
+  form.append('file', file, file.name);
+  if (fields.document_type) form.append('Document_Type', fields.document_type);
+  if (fields.collection_name) form.append('Collection_Name', fields.collection_name);
+  if (fields.categories !== undefined) form.append('Categories', fields.categories);
+  if (fields.chunking_strategy) form.append('Chunking_Strategy', fields.chunking_strategy);
+  const res = await fetch(`${backendUrl()}/api/review/upload`, {
+    method: 'POST',
+    body: form
+  });
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as ReviewUploadResponse;
+}
+
+/** GET /api/review/pending -- list every batch awaiting review. */
+export async function fetchPending(): Promise<PendingResponse> {
+  const res = await fetch(`${backendUrl()}/api/review/pending`);
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as PendingResponse;
+}
+
+/** POST /api/review/{batch_id}/resume -- submit decisions for a batch. The
+ *  backend looks up the n8n resume URL by re-fetching the pending list. */
+export async function submitDecisions(
+  batchId: string,
+  decisions: ChunkDecision[]
+): Promise<void> {
+  const res = await fetch(
+    `${backendUrl()}/api/review/${encodeURIComponent(batchId)}/resume`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ batch_id: batchId, decisions })
+    }
+  );
+  if (!res.ok) throw await readError(res);
 }
 
 // --- WebSocket --------------------------------------------------------------
