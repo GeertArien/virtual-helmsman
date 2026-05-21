@@ -135,7 +135,11 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
     )
     # Interruption handling lives in the turn strategies (VADUserTurnStartStrategy
     # enables interruptions by default), not in PipelineParams.
-    task = PipelineTask(pipeline, observers=observers)
+    # idle_timeout_secs=None disables Pipecat's 5-minute idle cancel -- a
+    # helmsman is silent between commands, and long stretches of quiet should
+    # not tear the pipeline down (also matters for the monitor-only frontend
+    # workflow, where the user is watching but not necessarily speaking).
+    task = PipelineTask(pipeline, observers=observers, idle_timeout_secs=None)
 
     log.info(
         "pipeline_built",
