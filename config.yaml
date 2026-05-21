@@ -68,16 +68,20 @@ documents:
   # n8n_upload_webhook: "http://localhost:5678/webhook/ingest-document"
 
   # Qdrant REST endpoint and the collection that holds the document chunks.
-  # qdrant_url: "http://127.0.0.1:6333"
-  # qdrant_collection: "documents"
+  qdrant_url: "http://127.0.0.1:6333"   # `qdrant` is a docker-internal host;
+                                        # this Windows machine reaches it via 127.0.0.1
+
+  qdrant_collection: "maritime_hybrid"
   qdrant_api_key_env: QDRANT_API_KEY      # ignored if the env var is unset
 
   # Payload field names used to group points into "documents" and to filter
-  # the delete call. Change these to match the ingestion pipeline's schema.
-  document_id_field: document_id
-  title_field: title
-  source_field: source
-  uploaded_at_field: uploaded_at
+  # the delete call. The maritime_hybrid collection groups chunks from one
+  # upload by `hitl_batch_id` (all chunks of `test.pdf` from a single review
+  # batch share one id), not by a per-document identifier.
+  document_id_field: hitl_batch_id
+  title_field: filename
+  source_field: document_type
+  uploaded_at_field: upload_timestamp
 
   scroll_limit: 10000              # hard cap on points scanned by /api/documents
   request_timeout_seconds: 30
