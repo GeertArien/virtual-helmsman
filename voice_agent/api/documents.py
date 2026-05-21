@@ -1,12 +1,13 @@
 """HTTP endpoints for qdrant document management.
 
-Three routes, all mounted at ``/api/documents``:
+Two routes, both mounted at ``/api/documents``:
 
-* ``GET    /api/documents``           -- list distinct documents in qdrant.
-* ``POST   /api/documents/upload``    -- forward an uploaded file to the n8n
-  ingestion webhook (which has a human-in-the-loop review step).
-* ``DELETE /api/documents/{id}``      -- delete every chunk whose payload
-  carries ``document_id == {id}`` from qdrant.
+* ``GET    /api/documents``       -- list distinct documents in qdrant.
+* ``DELETE /api/documents/{id}``  -- delete every chunk whose payload carries
+  ``document_id == {id}`` (the field name is configurable).
+
+Uploads are not handled here -- they live under ``/api/review`` because
+ingestion runs through n8n with a human-in-the-loop review step.
 
 Each route degrades gracefully when its required config field is missing:
 the call returns HTTP 503 with a body that names the exact field to set,
@@ -23,7 +24,7 @@ import os
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, HTTPException
 
 from voice_agent.config import DocumentsConfig
 from voice_agent.logging_setup import get_logger
@@ -159,67 +160,6 @@ def create_documents_router(cfg: DocumentsConfig) -> APIRouter:
             "documents_listed", count=len(documents), points_scanned=len(scrolled)
         )
         return {"documents": documents}
-
-    # ---- UPLOAD --------------------------------------------------------
-    @router.post("/upload")
-    async def upload_document(
-        file: UploadFile = File(...),
-        title: str | None = Form(default=None),
-    ) -> dict[str, Any]:
-        if not cfg.n8n_upload_webhook:
-            raise _missing("n8n_upload_webhook")
-
-        content = await file.read()
-        files = {
-            "file": (
-                file.filename or "upload.bin",
-                content,
-                file.content_type or "application/octet-stream",
-            )
-        }
-        data: dict[str, str] = {}
-        if title:
-            data["title"] = title
-        if file.filename:
-            data["filename"] = file.filename
-
-        try:
-            res = await client.post(
-                cfg.n8n_upload_webhook,
-                files=files,
-                data=data,
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
-
-        if res.status_code >= 400:
-            try:
-                detail = res.json()
-            except ValueError:
-                detail = res.text
-            raise HTTPException(
-                status_code=502,
-                detail={"upstream_status": res.status_code, "n8n": detail},
-            )
-
-        # n8n's response shape is workflow-defined. Pass it through and
-        # synthesise the fields the frontend type expects if absent.
-        try:
-            body = res.json()
-        except ValueError:
-            body = {}
-        log.info(
-            "document_upload_forwarded",
-            filename=file.filename,
-            size_bytes=len(content),
-            n8n_status=res.status_code,
-        )
-        return {
-            "status": body.get("status", "accepted"),
-            "document_id": body.get("document_id"),
-            "message": body.get("message")
-            or "Submitted to the n8n review workflow.",
-        }
 
     # ---- DELETE --------------------------------------------------------
     @router.delete("/{document_id}")

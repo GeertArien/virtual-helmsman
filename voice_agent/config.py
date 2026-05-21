@@ -114,17 +114,18 @@ class ApiConfig(_Base):
 
 
 class DocumentsConfig(_Base):
-    """Qdrant + n8n document management. All fields optional -- when a field
-    is missing the corresponding endpoint returns HTTP 503 with a clear
-    "configure documents.<field>" message rather than failing silently.
+    """Qdrant document management (list + delete). All fields optional --
+    when a field is missing the corresponding endpoint returns HTTP 503 with
+    a "configure documents.<field>" message rather than failing silently.
 
     The qdrant payload field names are configurable because different
     ingestion pipelines store metadata under different keys; defaults match
     the common "document_id / title / source / uploaded_at" convention.
+
+    Uploads live under :class:`ReviewConfig` -- this block intentionally has
+    no n8n field.
     """
 
-    # n8n webhook the upload endpoint forwards multipart/form-data to.
-    n8n_upload_webhook: str | None = None
     # qdrant REST base URL (e.g. "http://127.0.0.1:6333"), collection name,
     # and the env var holding the qdrant API key (if any).
     qdrant_url: str | None = None
@@ -138,8 +139,44 @@ class DocumentsConfig(_Base):
     # Hard cap on points scrolled when listing documents -- keeps the listing
     # call bounded for large collections. Increase if you genuinely have more.
     scroll_limit: int = 10000
-    # Request timeout (seconds) for outbound calls to qdrant and n8n.
+    # Request timeout (seconds) for outbound calls to qdrant.
     request_timeout_seconds: float = 30.0
+
+
+class ReviewConfig(_Base):
+    """HITL chunk-review proxy in front of n8n.
+
+    The Python backend proxies three n8n routes at ``<base_url>/webhook/...``:
+
+    * ``POST /webhook/review/upload``      -- multipart, starts ingestion.
+    * ``GET  /webhook/review/pending``     -- batches awaiting review.
+    * ``POST <resume_url>``                -- one-shot per batch.
+
+    The frontend never sees the per-batch ``resume_url``: the backend keeps
+    that mapping server-side and exposes ``/api/review/{batch_id}/resume``
+    instead.
+
+    All fields optional; when ``n8n_base_url`` is unset every endpoint
+    returns HTTP 503 with a clear "configure review.n8n_base_url" message.
+    """
+
+    # n8n base URL, e.g. "http://127.0.0.1:5678". Routes are appended below.
+    n8n_base_url: str | None = None
+    # Per-route path suffixes -- override only if n8n is mounted under a
+    # custom path (e.g. behind a reverse proxy that rewrites /webhook).
+    upload_path: str = "/webhook/review/upload"
+    pending_path: str = "/webhook/review/pending"
+    # Pre-fill values shown in the upload form. The webhook treats the
+    # corresponding fields as required (Document_Type, Collection_Name) or
+    # optional with its own defaults (Categories, Chunking_Strategy).
+    default_document_type: str = "PDF"
+    default_collection_name: str = "maritime_hybrid"
+    default_categories: str = "algemeen"
+    default_chunking_strategy: Literal[
+        "paragraph_aware", "fixed_size", "llm_semantic"
+    ] = "paragraph_aware"
+    # Request timeout (seconds) for outbound calls to n8n.
+    request_timeout_seconds: float = 60.0
 
 
 class AppConfig(_Base):
@@ -155,6 +192,7 @@ class AppConfig(_Base):
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     api: ApiConfig = Field(default_factory=ApiConfig)
     documents: DocumentsConfig = Field(default_factory=DocumentsConfig)
+    review: ReviewConfig = Field(default_factory=ReviewConfig)
 
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:

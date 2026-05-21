@@ -1,8 +1,9 @@
 """Tests for /api/documents endpoints and the documents config.
 
-The qdrant + n8n integrations are exercised at the boundary: we stub the
+The qdrant integration is exercised at the boundary: we stub the
 :class:`httpx.AsyncClient` on the router so the tests stay hermetic and don't
-need a running qdrant or n8n instance.
+need a running qdrant instance. Upload tests live in test_api_review.py --
+ingestion is handled by the /api/review router now.
 """
 
 from __future__ import annotations
@@ -41,11 +42,12 @@ def _session() -> SessionInfo:
 
 def test_documents_config_defaults_disable_endpoints():
     cfg = DocumentsConfig()
-    assert cfg.n8n_upload_webhook is None
     assert cfg.qdrant_url is None
     assert cfg.qdrant_collection is None
     assert cfg.document_id_field == "document_id"
     assert cfg.scroll_limit == 10000
+    # Upload moved to ReviewConfig -- DocumentsConfig must not carry it.
+    assert not hasattr(cfg, "n8n_upload_webhook")
 
 
 def test_documents_config_extra_forbid_rejects_typos():
@@ -65,7 +67,13 @@ def test_list_returns_503_when_qdrant_unconfigured():
     assert "qdrant_url" in res.json()["detail"]
 
 
-def test_upload_returns_503_when_n8n_unconfigured():
+def test_upload_route_is_gone():
+    """/api/documents/upload was retired -- uploads live under /api/review.
+
+    The DELETE-by-id route at /api/documents/{document_id} catches the path,
+    so a POST returns 405 Method Not Allowed; either 404 or 405 means
+    there's no upload handler under /api/documents anymore.
+    """
     cfg = DocumentsConfig()
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
     with TestClient(app) as c:
@@ -73,8 +81,7 @@ def test_upload_returns_503_when_n8n_unconfigured():
             "/api/documents/upload",
             files={"file": ("hello.txt", b"hi", "text/plain")},
         )
-    assert res.status_code == 503
-    assert "n8n_upload_webhook" in res.json()["detail"]
+    assert res.status_code in (404, 405)
 
 
 def test_delete_returns_503_when_qdrant_unconfigured():
@@ -246,51 +253,6 @@ def test_delete_document_returns_404_when_no_chunks(monkeypatch: pytest.MonkeyPa
         res = c.delete("/api/documents/missing-id")
     assert res.status_code == 404
     assert len(stub.calls) == 1  # no delete call when count is 0
-
-
-def test_upload_forwards_multipart_to_n8n(monkeypatch: pytest.MonkeyPatch) -> None:
-    stub = _StubClient()
-    stub.queue(
-        _FakeResponse(
-            200,
-            {"status": "queued", "document_id": "doc-new", "message": "Awaiting review."},
-        )
-    )
-    monkeypatch.setattr("voice_agent.api.documents.httpx.AsyncClient", lambda **_: stub)
-
-    cfg = DocumentsConfig(n8n_upload_webhook="http://n8n/webhook/ingest")
-    app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
-    with TestClient(app) as c:
-        res = c.post(
-            "/api/documents/upload",
-            files={"file": ("notes.md", b"# hello", "text/markdown")},
-            data={"title": "My notes"},
-        )
-    assert res.status_code == 200
-    body = res.json()
-    assert body["status"] == "queued"
-    assert body["document_id"] == "doc-new"
-    # Right URL, multipart files passed through, title forwarded as form data.
-    assert stub.calls[0]["url"] == "http://n8n/webhook/ingest"
-    assert "files" in stub.calls[0]["kwargs"]
-    assert stub.calls[0]["kwargs"]["data"]["title"] == "My notes"
-
-
-def test_upload_502s_when_n8n_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    stub = _StubClient()
-    stub.queue(_FakeResponse(500, {"error": "workflow exploded"}))
-    monkeypatch.setattr("voice_agent.api.documents.httpx.AsyncClient", lambda **_: stub)
-
-    cfg = DocumentsConfig(n8n_upload_webhook="http://n8n/webhook/ingest")
-    app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
-    with TestClient(app) as c:
-        res = c.post(
-            "/api/documents/upload",
-            files={"file": ("notes.md", b"# hello", "text/markdown")},
-        )
-    assert res.status_code == 502
-    detail = res.json()["detail"]
-    assert detail["upstream_status"] == 500
 
 
 def test_qdrant_unreachable_returns_502(monkeypatch: pytest.MonkeyPatch) -> None:

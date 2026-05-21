@@ -59,25 +59,17 @@ api:
   cors_allow_origins:              # add the Vite dev origin when developing the UI
     - "*"
 
-# Qdrant + n8n document management for the frontend's /documents page.
-# Each endpoint returns HTTP 503 with a clear message until the relevant
-# fields below are populated -- so the frontend can start up before all
-# integrations are wired.
+# Qdrant document management (list + delete) for the frontend's /documents page.
+# Endpoints return HTTP 503 until the qdrant_url + qdrant_collection are set.
 documents:
-  # n8n webhook (multipart/form-data POST with `file` + optional `title`).
-  # n8n_upload_webhook: "http://localhost:5678/webhook/ingest-document"
-
-  # Qdrant REST endpoint and the collection that holds the document chunks.
   qdrant_url: "http://127.0.0.1:6333"   # `qdrant` is a docker-internal host;
                                         # this Windows machine reaches it via 127.0.0.1
-
   qdrant_collection: "maritime_hybrid"
   qdrant_api_key_env: QDRANT_API_KEY      # ignored if the env var is unset
 
   # Payload field names used to group points into "documents" and to filter
   # the delete call. The maritime_hybrid collection groups chunks from one
-  # upload by `hitl_batch_id` (all chunks of `test.pdf` from a single review
-  # batch share one id), not by a per-document identifier.
+  # upload by `hitl_batch_id`, not by a per-document identifier.
   document_id_field: hitl_batch_id
   title_field: filename
   source_field: document_type
@@ -85,3 +77,20 @@ documents:
 
   scroll_limit: 10000              # hard cap on points scanned by /api/documents
   request_timeout_seconds: 30
+
+# n8n HITL chunk-review proxy for the frontend's /review page.
+# Three endpoints are proxied: POST /api/review/upload, GET /api/review/pending,
+# POST /api/review/{batch_id}/resume. All return HTTP 503 until n8n_base_url
+# is set.
+review:
+  n8n_base_url: "http://127.0.0.1:5678"   # n8n's host alias is docker-internal
+  upload_path: /webhook/review/upload
+  pending_path: /webhook/review/pending
+  # Pre-fill values for the upload form. The webhook treats Document_Type and
+  # Collection_Name as required; Categories and Chunking_Strategy fall back to
+  # the webhook's own defaults when omitted.
+  default_document_type: PDF
+  default_collection_name: maritime_hybrid
+  default_categories: algemeen
+  default_chunking_strategy: paragraph_aware   # | fixed_size | llm_semantic
+  request_timeout_seconds: 60

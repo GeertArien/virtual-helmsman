@@ -26,7 +26,8 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
-from voice_agent.config import DocumentsConfig
+from voice_agent.api.review import create_review_router
+from voice_agent.config import DocumentsConfig, ReviewConfig
 from voice_agent.logging_setup import get_logger
 
 
@@ -54,6 +55,7 @@ def create_app(
     session: SessionInfo,
     cors_allow_origins: list[str] | None = None,
     documents: DocumentsConfig | None = None,
+    review: ReviewConfig | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to a live ``event_bus`` and session.
 
@@ -61,26 +63,32 @@ def create_app(
     Re-creating the app per session is therefore cheap and isolation between
     sessions is clean.
 
-    Passing ``documents`` mounts the qdrant management routes; when omitted
-    only the monitor endpoints are exposed (the frontend's /documents page
-    will then see 404s rather than configuration errors).
+    Passing ``documents`` mounts the qdrant management routes; passing
+    ``review`` mounts the n8n HITL review routes. When either is omitted,
+    that family of endpoints simply isn't registered (the frontend gets a
+    404 rather than a configuration error).
     """
     log = get_logger("api")
 
-    # The documents router owns a long-lived httpx.AsyncClient that must be
-    # closed at shutdown. We build it before the app so the lifespan handler
-    # can reference it without an attribute dance.
+    # Each optional router owns a long-lived httpx.AsyncClient that must be
+    # closed at shutdown. We build them before the app so the lifespan
+    # handler can reference them without an attribute dance.
     docs_router: APIRouter | None = None
     if documents is not None:
         docs_router = create_documents_router(documents)
+    review_router: APIRouter | None = None
+    if review is not None:
+        review_router = create_review_router(review)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
             yield
         finally:
-            if docs_router is not None:
-                client = getattr(docs_router, "_http_client", None)
+            for r in (docs_router, review_router):
+                if r is None:
+                    continue
+                client = getattr(r, "_http_client", None)
                 if client is not None:
                     await client.aclose()
 
@@ -95,6 +103,8 @@ def create_app(
 
     if docs_router is not None:
         app.include_router(docs_router)
+    if review_router is not None:
+        app.include_router(review_router)
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
