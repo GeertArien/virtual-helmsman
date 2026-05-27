@@ -7,7 +7,7 @@
  * source of truth for live data -- do not duplicate fields into local state.
  */
 
-import { EventStream, fetchSession } from './api';
+import { EventStream, fetchControlState, fetchSession } from './api';
 import type {
   AgentEvent,
   ConnectionState,
@@ -27,7 +27,11 @@ export const live = $state({
   session: null as SessionInfo | null,
   entries: [] as Entry[],
   shipState: null as ShipStateEvent | null,
-  turnMetrics: [] as TurnMetricsEvent[]
+  turnMetrics: [] as TurnMetricsEvent[],
+  /** ``null`` while the initial /api/control/state fetch is in flight.
+   *  Components should treat that as "unknown" and disable both inputs
+   *  rather than guessing. */
+  micEnabled: null as boolean | null
 });
 
 let stream: EventStream | null = null;
@@ -68,6 +72,9 @@ function onEvent(ev: AgentEvent) {
     case 'turn_metrics':
       live.turnMetrics = live.turnMetrics.concat(ev).slice(-MAX_TURNS);
       break;
+    case 'input_mode_changed':
+      live.micEnabled = ev.mic_enabled;
+      break;
   }
 }
 
@@ -81,6 +88,11 @@ export function startLiveStream(): () => void {
   fetchSession()
     .then((info) => (live.session = info))
     .catch((err) => console.warn('GET /api/session failed', err));
+  // Mic state has no pipeline event to seed it -- pull the snapshot once.
+  // Subsequent toggles arrive as ``input_mode_changed`` events on the WS.
+  fetchControlState()
+    .then((s) => (live.micEnabled = s.mic_enabled))
+    .catch((err) => console.warn('GET /api/control/state failed', err));
   stream = new EventStream(onEvent, (s) => (live.connection = s));
   stream.connect();
   return () => {

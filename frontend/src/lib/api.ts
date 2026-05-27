@@ -54,13 +54,19 @@ export interface TurnMetricsEvent extends BaseEvent {
   }>;
 }
 
+export interface InputModeChangedEvent extends BaseEvent {
+  kind: 'input_mode_changed';
+  mic_enabled: boolean;
+}
+
 export type AgentEvent =
   | TranscriptEvent
   | AssistantReplyEvent
   | ActionDispatchedEvent
   | ActionRefusedEvent
   | ShipStateEvent
-  | TurnMetricsEvent;
+  | TurnMetricsEvent
+  | InputModeChangedEvent;
 
 export interface SessionInfo {
   session_id: string;
@@ -312,6 +318,47 @@ export async function fetchAuditLog(
   );
   if (!res.ok) throw await readError(res);
   return (await res.json()) as AuditLogResponse;
+}
+
+// --- Control plane (mic toggle + text-command injection) -------------------
+
+/** Snapshot of the agent's input mode -- the chatbox is locked while the mic
+ *  is enabled. Fetched once on first load; subsequent changes arrive as
+ *  ``input_mode_changed`` WS events. */
+export interface ControlStateResponse {
+  mic_enabled: boolean;
+}
+
+/** GET /api/control/state -- initial mic-enabled snapshot. */
+export async function fetchControlState(): Promise<ControlStateResponse> {
+  const res = await fetch(`${backendUrl()}/api/control/state`);
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as ControlStateResponse;
+}
+
+/** POST /api/control/mic -- enable or disable the server-side microphone. */
+export async function setMicEnabled(enabled: boolean): Promise<ControlStateResponse> {
+  const res = await fetch(`${backendUrl()}/api/control/mic`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ enabled })
+  });
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as ControlStateResponse;
+}
+
+/** POST /api/control/text -- inject a typed command as a user turn.
+ *
+ *  The backend returns 409 if the mic is still enabled -- the UI guards
+ *  against that by disabling the textarea, but a stale browser state could
+ *  still hit it. */
+export async function sendTextCommand(text: string): Promise<void> {
+  const res = await fetch(`${backendUrl()}/api/control/text`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text })
+  });
+  if (!res.ok) throw await readError(res);
 }
 
 // --- WebSocket --------------------------------------------------------------
