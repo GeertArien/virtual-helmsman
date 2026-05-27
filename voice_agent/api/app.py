@@ -19,11 +19,13 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from voice_agent.api.config_router import create_config_router
 from voice_agent.api.control import ControlState
 from voice_agent.api.control_router import TextInjector, create_control_router
 from voice_agent.api.documents import create_documents_router
@@ -60,6 +62,7 @@ def create_app(
     review: ReviewConfig | None = None,
     control_state: ControlState | None = None,
     inject_text: TextInjector | None = None,
+    config_path: Path | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to a live ``event_bus`` and session.
 
@@ -77,6 +80,10 @@ def create_app(
     either is missing the routes are not registered and the frontend gets a
     404. Decoupling them lets tests pass a list-append stub for
     ``inject_text`` without standing up a real pipeline task.
+
+    Passing ``config_path`` mounts ``/api/config`` (view + edit ``config.yaml``
+    and trigger a process reload). Omit it in tests that don't need to round-
+    trip through disk.
     """
     log = get_logger("api")
 
@@ -123,6 +130,8 @@ def create_app(
                 inject_text=inject_text,
             )
         )
+    if config_path is not None:
+        app.include_router(create_config_router(config_path=config_path))
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from datetime import datetime, timezone
+from pathlib import Path
 
 from pipecat.pipeline.runner import PipelineRunner
 
@@ -38,7 +39,9 @@ def _session_info(config: AppConfig, session_id: str, started_at: str) -> Sessio
     )
 
 
-async def _maybe_start_api(config: AppConfig, built: BuiltPipeline) -> ApiServer | None:
+async def _maybe_start_api(
+    config: AppConfig, built: BuiltPipeline, config_path: str
+) -> ApiServer | None:
     """Start the FastAPI server alongside the pipeline if configured."""
     if not config.api.enabled or built.event_bus is None:
         return None
@@ -52,6 +55,7 @@ async def _maybe_start_api(config: AppConfig, built: BuiltPipeline) -> ApiServer
         review=config.review,
         control_state=built.control_state,
         inject_text=build_text_injector(built.task, built.llm_context),
+        config_path=Path(config_path),
     )
     server = ApiServer(app, host=config.api.host, port=config.api.port)
     await server.start()
@@ -67,7 +71,7 @@ async def _run(config_path: str) -> None:
     log.info("session_start", session_id=session_id, config_path=config_path)
 
     built = build_pipeline(config, session_id)
-    api = await _maybe_start_api(config, built)
+    api = await _maybe_start_api(config, built, config_path)
     runner = PipelineRunner(handle_sigint=True)
     try:
         await runner.run(built.task)
