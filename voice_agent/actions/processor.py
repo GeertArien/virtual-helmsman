@@ -29,11 +29,14 @@ from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from voice_agent.actions.dispatch import DispatchResult, dispatch_action
 from voice_agent.actions.schema import (
     ActionParseError,
+    AnchorAction,
+    AutopilotAction,
     ErrorAction,
-    GetShipStateAction,
     HelmsmanResponse,
-    SetEngineTelegraphAction,
-    SetHeadingAction,
+    NavigationAction,
+    RudderAction,
+    StatusQueryAction,
+    ThrottleAction,
     parse_response,
 )
 from voice_agent.api.events import (
@@ -138,12 +141,20 @@ class JsonActionProcessor(FrameProcessor):
             return
 
         details: dict[str, Any]
-        if isinstance(action, SetHeadingAction):
-            details = {"degrees": action.degrees % 360}
-        elif isinstance(action, SetEngineTelegraphAction):
-            details = {"order": action.order.value}
-        elif isinstance(action, GetShipStateAction):
-            details = {}
+        if isinstance(action, RudderAction):
+            details = {"direction": action.direction, "degrees": action.degrees}
+        elif isinstance(action, ThrottleAction):
+            details = {"speed": action.speed, "unit": action.unit}
+        elif isinstance(action, NavigationAction):
+            details = {"course": action.course}
+        elif isinstance(action, AutopilotAction):
+            details = {"state": action.state}
+        elif isinstance(action, AnchorAction):
+            details = {"operation": action.operation}
+            if action.chain_length is not None:
+                details["chain_length"] = action.chain_length
+        elif isinstance(action, StatusQueryAction):
+            details = {"query": action.query}
         else:  # pragma: no cover -- discriminated union is exhaustive
             details = {}
 

@@ -57,10 +57,17 @@ class AssistantReplyEvent(_BaseEvent):
 
 
 class ActionDispatchedEvent(_BaseEvent):
-    """An action was carried out against the simulator."""
+    """An action was carried out (or acknowledged) against the simulator.
+
+    ``action`` is one of the n8n action types (``rudder``, ``throttle``,
+    ``navigation``, ``autopilot``, ``anchor``, ``status_query``). The
+    ``details`` shape is action-specific; see
+    :meth:`~voice_agent.actions.processor.JsonActionProcessor._publish_turn_events`
+    for the per-type schema.
+    """
 
     kind: Literal["action_dispatched"] = "action_dispatched"
-    action: str  # set_heading | set_engine_telegraph | get_ship_state
+    action: str
     details: dict[str, Any] = Field(default_factory=dict)
 
 

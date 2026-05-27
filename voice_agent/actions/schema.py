@@ -1,12 +1,22 @@
 """Structured-action schema for the helmsman's JSON replies.
 
 The LLM answers every command with one JSON object: an ``action`` (one of the
-four types below) plus a ``response`` -- the spoken acknowledgement. The pydantic
-models here validate that object; :data:`RESPONSE_FORMAT` is the JSON schema
-handed to the LLM server so it constrains decoding to the right shape.
+six command types or an ``error``) plus a ``response`` -- the spoken
+acknowledgement. The Pydantic models here validate that object;
+:data:`RESPONSE_FORMAT` is the JSON schema handed to the LLM server so it
+grammar-constrains decoding to the right shape.
 
-This replaces native OpenAI tool calling: a small local model emits a
-constrained JSON object far more reliably than it emits ``tool_calls``.
+The vocabulary mirrors the n8n helmsman workflow (see ``n8n_system_prompt.txt``
+in the repo root and ``API.md``). The local LM Studio backend and the n8n
+backend therefore produce the same on-the-wire action shape -- only their
+"envelope" differs (n8n adds an ``intent`` / ``output`` / ``source`` layer for
+its RAG branch). The simulator-side translation lives in
+:mod:`voice_agent.actions.dispatch`; the simulator client itself still speaks
+its narrower native protocol (``set_heading`` / ``set_engine_telegraph`` /
+``get_state``).
+
+``multi_step`` from the n8n prompt is intentionally omitted -- v1 dispatches
+one action per turn.
 """
 
 from __future__ import annotations
@@ -16,34 +26,76 @@ from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, ValidationError
 
-from voice_agent.backends.simulator.base import EngineOrder
 
-# The nine telegraph orders, as the LLM-facing string values.
-ENGINE_ORDER_VALUES: list[str] = [order.value for order in EngineOrder]
+# Safety limits, lifted verbatim from the n8n system prompt. Repeating them
+# here as Pydantic constraints is belt-and-suspenders: the prompt teaches the
+# LLM to emit an `error` action with `error_type: "safety_limit_exceeded"`
+# when these are breached, and if it slips up anyway the model_validate call
+# rejects the action.
+MAX_RUDDER_DEGREES: float = 45.0
+MAX_SPEED_KNOTS: float = 30.0
+HEADING_MAX: int = 359
 
 
 class ActionParseError(Exception):
     """Raised when LLM output is not a valid helmsman response object."""
 
 
-class SetHeadingAction(BaseModel):
-    """Steer the ship to an absolute compass heading."""
+class RudderAction(BaseModel):
+    """Relative steering command: turn `degrees` to port or starboard."""
 
-    type: Literal["set_heading"]
-    degrees: float
-
-
-class SetEngineTelegraphAction(BaseModel):
-    """Set the engine telegraph to one of the nine standard orders."""
-
-    type: Literal["set_engine_telegraph"]
-    order: EngineOrder
+    type: Literal["rudder"]
+    direction: Literal["port", "starboard"]
+    degrees: Annotated[float, Field(ge=0, le=MAX_RUDDER_DEGREES)]
 
 
-class GetShipStateAction(BaseModel):
-    """Report the ship's current heading, speed, and engine order."""
+class ThrottleAction(BaseModel):
+    """Set the ship's speed. The dispatcher maps knots to a telegraph order.
 
-    type: Literal["get_ship_state"]
+    ``unit`` is fixed to ``"knots"`` in v1 -- the prompt doesn't teach the LLM
+    any other unit, and a freeform unit field would be a footgun.
+    """
+
+    type: Literal["throttle"]
+    speed: Annotated[float, Field(ge=-MAX_SPEED_KNOTS, le=MAX_SPEED_KNOTS)]
+    unit: Literal["knots"] = "knots"
+
+
+class NavigationAction(BaseModel):
+    """Steer to an absolute compass course (0-359)."""
+
+    type: Literal["navigation"]
+    course: Annotated[int, Field(ge=0, le=HEADING_MAX)]
+
+
+class AutopilotAction(BaseModel):
+    """Engage or disengage the autopilot.
+
+    The current simulator does not yet implement autopilot; the dispatcher
+    logs the request and acknowledges verbally without touching ship state.
+    """
+
+    type: Literal["autopilot"]
+    state: Literal["engaged", "disengaged"]
+
+
+class AnchorAction(BaseModel):
+    """Anchor operations. Same v1 status as autopilot: ack-only, no sim call.
+
+    ``chain_length`` is meaningful only for ``let_out_chain``; left optional
+    so the model can omit it for drop/raise (matches the n8n schema).
+    """
+
+    type: Literal["anchor"]
+    operation: Literal["drop", "raise", "let_out_chain"]
+    chain_length: float | None = None
+
+
+class StatusQueryAction(BaseModel):
+    """Read-back of one field of the ship state."""
+
+    type: Literal["status_query"]
+    query: Literal["heading", "speed", "position"]
 
 
 class ErrorAction(BaseModel):
@@ -58,9 +110,12 @@ class ErrorAction(BaseModel):
 # Discriminated on ``type`` -- pydantic selects the right model per object.
 HelmsmanAction = Annotated[
     Union[
-        SetHeadingAction,
-        SetEngineTelegraphAction,
-        GetShipStateAction,
+        RudderAction,
+        ThrottleAction,
+        NavigationAction,
+        AutopilotAction,
+        AnchorAction,
+        StatusQueryAction,
         ErrorAction,
     ],
     Field(discriminator="type"),
@@ -109,9 +164,11 @@ def parse_response(text: str) -> HelmsmanResponse:
 
 
 # JSON schema handed to the LLM server via ``response_format``. Deliberately
-# loose -- only ``type`` is required inside ``action`` -- so a grammar converter
-# accepts it; the pydantic models above enforce the per-action fields after
-# decoding. The prompt, not the schema, teaches which fields each action needs.
+# loose -- only ``type`` is required inside ``action``, and the per-action
+# properties are all listed flat without ``oneOf`` branches -- so any grammar
+# converter accepts it. The pydantic models above enforce the per-action
+# fields after decoding. The prompt, not the schema, teaches which fields
+# each action needs.
 RESPONSE_FORMAT: dict = {
     "type": "json_schema",
     "json_schema": {
@@ -125,14 +182,43 @@ RESPONSE_FORMAT: dict = {
                         "type": {
                             "type": "string",
                             "enum": [
-                                "set_heading",
-                                "set_engine_telegraph",
-                                "get_ship_state",
+                                "rudder",
+                                "throttle",
+                                "navigation",
+                                "autopilot",
+                                "anchor",
+                                "status_query",
                                 "error",
                             ],
                         },
+                        # rudder
+                        "direction": {
+                            "type": "string",
+                            "enum": ["port", "starboard"],
+                        },
                         "degrees": {"type": "number"},
-                        "order": {"type": "string", "enum": ENGINE_ORDER_VALUES},
+                        # throttle
+                        "speed": {"type": "number"},
+                        "unit": {"type": "string", "enum": ["knots"]},
+                        # navigation
+                        "course": {"type": "integer"},
+                        # autopilot
+                        "state": {
+                            "type": "string",
+                            "enum": ["engaged", "disengaged"],
+                        },
+                        # anchor
+                        "operation": {
+                            "type": "string",
+                            "enum": ["drop", "raise", "let_out_chain"],
+                        },
+                        "chain_length": {"type": "number"},
+                        # status_query
+                        "query": {
+                            "type": "string",
+                            "enum": ["heading", "speed", "position"],
+                        },
+                        # error
                         "error_type": {"type": "string"},
                         "reason": {"type": "string"},
                         "suggestion": {"type": "string"},

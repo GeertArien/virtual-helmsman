@@ -44,7 +44,7 @@ def test_each_event_kind_is_unique() -> None:
     samples = [
         TranscriptEvent(text="x"),
         AssistantReplyEvent(text="x"),
-        ActionDispatchedEvent(action="set_heading", details={"degrees": 90}),
+        ActionDispatchedEvent(action="navigation", details={"course": 90}),
         ShipStateEvent(heading_deg=90, speed_kn=12, engine_order="full_ahead"),
         TurnMetricsEvent(turn_index=0, metrics_ms={"voice_to_voice_ms": 1500}),
     ]
