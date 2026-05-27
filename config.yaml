@@ -1,97 +1,70 @@
-# Default config: Parakeet-0.6B / Kokoro / Silero / smart_turn_v3 / mock simulator.
-# Env vars override values here: LLM_BASE_URL, LLM_API_KEY, SIMULATOR_BACKEND.
-
 stt:
-  backend: parakeet_onnx          # parakeet_onnx | parakeet_nemo | whisper
-  # onnx-asr model name. It ships only the 0.6b Parakeet variants (no 1.1b):
-  # nemo-parakeet-tdt-0.6b-v2 (English) | nemo-parakeet-tdt-0.6b-v3 (multilingual).
+  backend: parakeet_onnx
   model: nemo-parakeet-tdt-0.6b-v2
   device: cuda
   language: en
-
 tts:
-  backend: kokoro                  # kokoro | piper
+  backend: kokoro
   voice: af_bella
   device: cuda
-
 vad:
   backend: silero
   threshold: 0.5
-  stop_secs: 0.8        # silence before a turn ends; raise if commands get split
-
+  stop_secs: 0.8
 turn_detection:
-  backend: smart_turn_v3           # smart_turn_v3 | vad_only
+  backend: smart_turn_v3
   device: cpu
-
 llm:
-  base_url: http://localhost:1234/v1   # LM Studio's OpenAI-compatible server
+  backend: n8n
+  base_url: http://localhost:5678
   model: nvidia/nemotron-3-nano-4b
-  api_key_env: LLM_API_KEY         # optional; LM Studio needs no key
+  api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
-
+  webhook_path: /webhook/helmsman
+  rerank: true
 simulator:
-  backend: mock                    # real | mock  (mock is the dev default)
+  backend: mock
   real:
-    host: 127.0.0.1                # passed to the vendored wrapper
+    host: 127.0.0.1
     port: 9100
     connect_timeout_seconds: 2
   mock:
     initial_heading: 0
     initial_engine_order: stop
-    log_commands: true             # log every command for test inspection
-
+    log_commands: true
 audio:
   input_device: default
   output_device: default
   sample_rate: 16000
-
 logging:
   level: info
-  format: json                     # json | console
+  format: json
   conversation_log_path: ./logs/conversations
   metrics_log_path: ./logs/metrics
-
 api:
-  enabled: true                    # set true to expose /api + /ws to the frontend
+  enabled: true
   host: 127.0.0.1
   port: 8765
-  cors_allow_origins:              # add the Vite dev origin when developing the UI
-    - "*"
-
-# Qdrant document management (list + delete) for the frontend's /documents page.
-# Endpoints return HTTP 503 until the qdrant_url + qdrant_collection are set.
+  cors_allow_origins:
+  - '*'
 documents:
-  qdrant_url: "http://127.0.0.1:6333"   # `qdrant` is a docker-internal host;
-                                        # this Windows machine reaches it via 127.0.0.1
-  qdrant_collection: "maritime_hybrid"
-  qdrant_api_key_env: QDRANT_API_KEY      # ignored if the env var is unset
-
-  # Payload field names used to group points into "documents" and to filter
-  # the delete call. The maritime_hybrid collection groups chunks from one
-  # upload by `hitl_batch_id`, not by a per-document identifier.
+  qdrant_url: http://127.0.0.1:6333
+  qdrant_collection: maritime_hybrid
+  qdrant_api_key_env: QDRANT_API_KEY
   document_id_field: hitl_batch_id
   title_field: filename
   source_field: document_type
   uploaded_at_field: upload_timestamp
-
-  scroll_limit: 10000              # hard cap on points scanned by /api/documents
+  scroll_limit: 10000
   request_timeout_seconds: 30
-
-# n8n HITL chunk-review proxy for the frontend's /review page.
-# Three endpoints are proxied: POST /api/review/upload, GET /api/review/pending,
-# POST /api/review/{batch_id}/resume. All return HTTP 503 until n8n_base_url
-# is set.
 review:
-  n8n_base_url: "http://127.0.0.1:5678"   # n8n's host alias is docker-internal
+  n8n_base_url: http://127.0.0.1:5678
   upload_path: /webhook/review/upload
   pending_path: /webhook/review/pending
   audit_log_path: /webhook/audit-log
-  # Pre-fill values for the upload form. The webhook treats Document_Type and
-  # Collection_Name as required; Categories and Chunking_Strategy fall back to
-  # the webhook's own defaults when omitted.
   default_document_type: PDF
   default_collection_name: maritime_hybrid
   default_categories: algemeen
-  default_chunking_strategy: paragraph_aware   # | fixed_size
+  default_chunking_strategy: paragraph_aware
   request_timeout_seconds: 60
