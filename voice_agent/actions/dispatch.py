@@ -32,6 +32,7 @@ from dataclasses import dataclass
 
 from voice_agent.actions.schema import (
     AnchorAction,
+    AnswerAction,
     AutopilotAction,
     ErrorAction,
     HelmsmanResponse,
@@ -124,6 +125,13 @@ async def dispatch_action(
         log.info(
             "action_refused", error_type=action.error_type, reason=action.reason
         )
+        return DispatchResult(spoken=parsed.response)
+
+    if isinstance(action, AnswerAction):
+        # n8n question-branch reply: just speak the RAG answer. No
+        # simulator side-effects, no event-bus dispatch beyond the
+        # assistant reply -- it's information, not a command.
+        log.info("answer_returned")
         return DispatchResult(spoken=parsed.response)
 
     try:

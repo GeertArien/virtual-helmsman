@@ -107,6 +107,22 @@ class ErrorAction(BaseModel):
     suggestion: str = ""
 
 
+class AnswerAction(BaseModel):
+    """A RAG-style information answer -- no simulator call, just speak.
+
+    Not part of the n8n LLM-side action vocabulary in ``n8n_system_prompt.txt``
+    (the LLM never emits this). Synthesised by the n8n *adapter* when the
+    workflow envelope reports ``intent: "question"`` -- in that branch the
+    envelope's ``output`` is a RAG answer, the ``action`` field is null, and
+    nothing needs to drive the simulator.
+
+    The local LM Studio backend never produces this type because its prompt
+    doesn't teach it -- LM Studio is command-only by design.
+    """
+
+    type: Literal["answer"]
+
+
 # Discriminated on ``type`` -- pydantic selects the right model per object.
 HelmsmanAction = Annotated[
     Union[
@@ -117,6 +133,7 @@ HelmsmanAction = Annotated[
         AnchorAction,
         StatusQueryAction,
         ErrorAction,
+        AnswerAction,
     ],
     Field(discriminator="type"),
 ]
@@ -189,6 +206,9 @@ RESPONSE_FORMAT: dict = {
                                 "anchor",
                                 "status_query",
                                 "error",
+                                # "answer" is not in the LLM-facing enum --
+                                # only the n8n adapter synthesises it, never
+                                # an LLM. Listing it here would be misleading.
                             ],
                         },
                         # rudder

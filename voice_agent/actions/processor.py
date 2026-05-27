@@ -30,6 +30,7 @@ from voice_agent.actions.dispatch import DispatchResult, dispatch_action
 from voice_agent.actions.schema import (
     ActionParseError,
     AnchorAction,
+    AnswerAction,
     AutopilotAction,
     ErrorAction,
     HelmsmanResponse,
@@ -138,6 +139,11 @@ class JsonActionProcessor(FrameProcessor):
                     suggestion=action.suggestion,
                 )
             )
+            return
+
+        if isinstance(action, AnswerAction):
+            # Question-intent reply -- the assistant_reply event we already
+            # published carries the spoken answer. Nothing to dispatch.
             return
 
         details: dict[str, Any]
