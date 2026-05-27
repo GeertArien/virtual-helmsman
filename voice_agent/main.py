@@ -21,7 +21,7 @@ from voice_agent.api.app import SessionInfo, create_app
 from voice_agent.api.server import ApiServer
 from voice_agent.config import AppConfig, load_config
 from voice_agent.logging_setup import configure_logging, get_logger, new_session_id
-from voice_agent.pipeline import BuiltPipeline, build_pipeline
+from voice_agent.pipeline import BuiltPipeline, build_pipeline, build_text_injector
 
 
 def _session_info(config: AppConfig, session_id: str, started_at: str) -> SessionInfo:
@@ -50,6 +50,8 @@ async def _maybe_start_api(config: AppConfig, built: BuiltPipeline) -> ApiServer
         cors_allow_origins=config.api.cors_allow_origins,
         documents=config.documents,
         review=config.review,
+        control_state=built.control_state,
+        inject_text=build_text_injector(built.task, built.llm_context),
     )
     server = ApiServer(app, host=config.api.host, port=config.api.port)
     await server.start()

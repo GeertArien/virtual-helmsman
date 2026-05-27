@@ -24,6 +24,8 @@ from typing import AsyncIterator
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from voice_agent.api.control import ControlState
+from voice_agent.api.control_router import TextInjector, create_control_router
 from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
 from voice_agent.api.review import create_review_router
@@ -56,6 +58,8 @@ def create_app(
     cors_allow_origins: list[str] | None = None,
     documents: DocumentsConfig | None = None,
     review: ReviewConfig | None = None,
+    control_state: ControlState | None = None,
+    inject_text: TextInjector | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to a live ``event_bus`` and session.
 
@@ -67,6 +71,12 @@ def create_app(
     ``review`` mounts the n8n HITL review routes. When either is omitted,
     that family of endpoints simply isn't registered (the frontend gets a
     404 rather than a configuration error).
+
+    ``control_state`` + ``inject_text`` together mount the ``/api/control``
+    router (mic toggle, text-command injection). Both must be supplied; if
+    either is missing the routes are not registered and the frontend gets a
+    404. Decoupling them lets tests pass a list-append stub for
+    ``inject_text`` without standing up a real pipeline task.
     """
     log = get_logger("api")
 
@@ -105,6 +115,14 @@ def create_app(
         app.include_router(docs_router)
     if review_router is not None:
         app.include_router(review_router)
+    if control_state is not None and inject_text is not None:
+        app.include_router(
+            create_control_router(
+                state=control_state,
+                event_bus=event_bus,
+                inject_text=inject_text,
+            )
+        )
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

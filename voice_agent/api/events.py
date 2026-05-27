@@ -90,6 +90,19 @@ class TurnMetricsEvent(_BaseEvent):
     metrics_ms: dict[str, float]
 
 
+class InputModeChangedEvent(_BaseEvent):
+    """Server-side mic was toggled on/off via ``POST /api/control/mic``.
+
+    Every connected browser tab listens for this event so the chat UI's mic
+    toggle stays in sync without having to poll. ``mic_enabled=True`` means
+    audio input is live and the chatbox should be locked; False means the
+    operator is in text mode.
+    """
+
+    kind: Literal["input_mode_changed"] = "input_mode_changed"
+    mic_enabled: bool
+
+
 # Union for serialization on the wire. Pydantic does not need a discriminated
 # union here -- we always know the concrete type at publish time -- but the
 # Literal ``kind`` makes the client side unambiguous.
@@ -100,6 +113,7 @@ Event = (
     | ActionRefusedEvent
     | ShipStateEvent
     | TurnMetricsEvent
+    | InputModeChangedEvent
 )
 
 
