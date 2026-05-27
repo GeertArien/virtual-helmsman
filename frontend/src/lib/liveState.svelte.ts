@@ -78,6 +78,23 @@ function onEvent(ev: AgentEvent) {
   }
 }
 
+/** Refresh every REST snapshot the UI shows in the header / chat toggle.
+ *
+ *  These fields don't have a corresponding pipeline event so they can't
+ *  auto-update from the WebSocket -- the only way to keep them in sync is
+ *  to re-fetch on connect. Called below whenever the WS transitions to
+ *  ``open``, so a backend reload (the WS drops, auto-reconnects, then
+ *  fires ``open``) refreshes them naturally.
+ */
+function refreshSnapshots(): void {
+  fetchSession()
+    .then((info) => (live.session = info))
+    .catch((err) => console.warn('GET /api/session failed', err));
+  fetchControlState()
+    .then((s) => (live.micEnabled = s.mic_enabled))
+    .catch((err) => console.warn('GET /api/control/state failed', err));
+}
+
 /**
  * Idempotently open the event stream and start refreshing session info.
  * Safe to call from +layout.svelte's onMount; repeated calls are no-ops.
@@ -85,15 +102,16 @@ function onEvent(ev: AgentEvent) {
  */
 export function startLiveStream(): () => void {
   if (stream) return () => {};
-  fetchSession()
-    .then((info) => (live.session = info))
-    .catch((err) => console.warn('GET /api/session failed', err));
-  // Mic state has no pipeline event to seed it -- pull the snapshot once.
-  // Subsequent toggles arrive as ``input_mode_changed`` events on the WS.
-  fetchControlState()
-    .then((s) => (live.micEnabled = s.mic_enabled))
-    .catch((err) => console.warn('GET /api/control/state failed', err));
-  stream = new EventStream(onEvent, (s) => (live.connection = s));
+  stream = new EventStream(onEvent, (next) => {
+    // Refresh REST snapshots on every transition into ``open`` -- covers
+    // first connect, reconnect after a network blip, and reconnect after
+    // a backend reload (post-/api/config/reload). The previous-state
+    // guard keeps duplicate transitions (open -> open) from re-firing.
+    if (next === 'open' && live.connection !== 'open') {
+      refreshSnapshots();
+    }
+    live.connection = next;
+  });
   stream.connect();
   return () => {
     stream?.close();
