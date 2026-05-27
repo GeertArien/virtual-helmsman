@@ -43,11 +43,10 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from voice_agent.actions.processor import JsonActionProcessor
 from voice_agent.actions.prompt import SYSTEM_PROMPT
-from voice_agent.actions.schema import RESPONSE_FORMAT
 from voice_agent.api.control import ControlState
 from voice_agent.api.events import EventBus, UserTranscriptObserver
 from voice_agent.api.mic_gate import MicGate
-from voice_agent.backends.llm.openai_compatible import build_llm
+from voice_agent.backends.llm.factory import create_llm
 from voice_agent.backends.simulator.base import SimulatorClient
 from voice_agent.backends.simulator.factory import create_simulator
 from voice_agent.backends.stt.factory import create_stt
@@ -169,8 +168,12 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
     turn_stop_strategy = create_turn(config.turn_detection)
     stt = create_stt(config.stt)
     tts = create_tts(config.tts)
-    # response_format constrains the LLM to emit the helmsman JSON object.
-    llm = build_llm(config.llm, extra={"response_format": RESPONSE_FORMAT})
+    # LLM backend is chosen by config.llm.backend: openai_compatible (LM
+    # Studio + JSON-schema response_format, command-only) or n8n (webhook
+    # adapter, command + RAG questions). Both slot into the same pipeline
+    # position because the n8n adapter mimics OpenAILLMService's frame
+    # contract.
+    llm = create_llm(config.llm)
 
     # --- transport ------------------------------------------------------
     # TODO: config.audio.input_device/output_device are accepted but not yet
