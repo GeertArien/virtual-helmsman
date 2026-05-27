@@ -42,8 +42,29 @@ function append(entry: Entry) {
 }
 
 function actionLabel(action: string, details: Record<string, unknown>): string {
-  if (action === 'set_heading' && 'degrees' in details) return `set_heading ${details.degrees}°`;
-  if (action === 'set_engine_telegraph' && 'order' in details) return `engine ${details.order}`;
+  // n8n action vocabulary -- map each type to a one-line readable summary
+  // for the conversation panel. Keep the prefix matching the action.type
+  // so operators can grep for it in the audit log.
+  if (action === 'rudder' && 'direction' in details && 'degrees' in details) {
+    return `rudder ${details.direction} ${details.degrees}°`;
+  }
+  if (action === 'throttle' && 'speed' in details) {
+    return `throttle ${details.speed} kn`;
+  }
+  if (action === 'navigation' && 'course' in details) {
+    return `navigation ${details.course}°`;
+  }
+  if (action === 'autopilot' && 'state' in details) {
+    return `autopilot ${details.state}`;
+  }
+  if (action === 'anchor' && 'operation' in details) {
+    const chain =
+      'chain_length' in details ? ` (${details.chain_length}m)` : '';
+    return `anchor ${details.operation}${chain}`;
+  }
+  if (action === 'status_query' && 'query' in details) {
+    return `status_query ${details.query}`;
+  }
   return action;
 }
 

@@ -22,9 +22,11 @@ export interface AssistantReplyEvent extends BaseEvent {
   text: string;
 }
 
+/** The n8n action vocabulary. `details` shape is action-specific (see
+ *  `JsonActionProcessor._publish_turn_events` on the backend). */
 export interface ActionDispatchedEvent extends BaseEvent {
   kind: 'action_dispatched';
-  action: 'set_heading' | 'set_engine_telegraph' | 'get_ship_state';
+  action: 'rudder' | 'throttle' | 'navigation' | 'autopilot' | 'anchor' | 'status_query';
   details: Record<string, unknown>;
 }
 
