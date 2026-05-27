@@ -166,6 +166,7 @@ class ReviewConfig(_Base):
     # custom path (e.g. behind a reverse proxy that rewrites /webhook).
     upload_path: str = "/webhook/review/upload"
     pending_path: str = "/webhook/review/pending"
+    audit_log_path: str = "/webhook/audit-log"
     # Pre-fill values shown in the upload form. The webhook treats the
     # corresponding fields as required (Document_Type, Collection_Name) or
     # optional with its own defaults (Categories, Chunking_Strategy).

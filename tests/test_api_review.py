@@ -372,3 +372,121 @@ def test_resume_returns_404_when_url_already_consumed(monkeypatch: pytest.Monkey
             json={"batch_id": "batch_abc", "decisions": []},
         )
     assert res.status_code == 404
+
+
+# ---------- Audit log ------------------------------------------------------
+
+
+_SAMPLE_AUDIT_BODY: dict[str, Any] = {
+    "total_in_log": 142,
+    "total_returned": 2,
+    "applied_filters": {"limit": 50, "actie": "ingestie_hitl", "since": None},
+    "entries": [
+        {
+            "id": 142,
+            "createdAt": "2026-05-27T09:14:22.118Z",
+            "document_naam": "Albertkanaal.pdf",
+            "actie": "ingestie_hitl",
+            "resultaat": "Succes — HITL batch batch_abc → approved=8 / edited=1 / rejected=1",
+        },
+        {
+            "id": 141,
+            "createdAt": "2026-05-27T09:11:05.002Z",
+            "document_naam": "COLREGS.pdf",
+            "actie": "ingestie_hitl",
+            "resultaat": "Fout — alle chunks afgewezen door reviewer",
+        },
+    ],
+}
+
+
+def test_audit_log_returns_503_when_n8n_unconfigured():
+    app = create_app(event_bus=EventBus(), session=_session(), review=ReviewConfig())
+    with TestClient(app) as c:
+        res = c.get("/api/review/audit-log")
+    assert res.status_code == 503
+    assert "n8n_base_url" in res.json()["detail"]
+
+
+def test_audit_log_passes_through_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _StubClient()
+    stub.queue(_FakeResponse(200, _SAMPLE_AUDIT_BODY))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.get("/api/review/audit-log")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["total_in_log"] == 142
+    assert len(body["entries"]) == 2
+    assert body["entries"][0]["actie"] == "ingestie_hitl"
+    # No query params forwarded when none provided.
+    assert stub.calls[0]["url"] == "http://n8n:5678/webhook/audit-log"
+    assert stub.calls[0]["kwargs"].get("params") is None
+
+
+def test_audit_log_forwards_filter_params(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _StubClient()
+    stub.queue(_FakeResponse(200, _SAMPLE_AUDIT_BODY))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.get(
+            "/api/review/audit-log",
+            params={
+                "limit": 20,
+                "actie": "ingestie_hitl",
+                "since": "2026-05-20T00:00:00Z",
+            },
+        )
+    assert res.status_code == 200
+    params = stub.calls[0]["kwargs"]["params"]
+    assert params == {
+        "limit": "20",
+        "actie": "ingestie_hitl",
+        "since": "2026-05-20T00:00:00Z",
+    }
+
+
+def test_audit_log_rejects_out_of_range_limit():
+    """Pydantic guards against bad limits before we ever call n8n."""
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.get("/api/review/audit-log", params={"limit": 0})
+    assert res.status_code == 422
+    with TestClient(app) as c:
+        res = c.get("/api/review/audit-log", params={"limit": 999})
+    assert res.status_code == 422
+
+
+def test_audit_log_502s_when_n8n_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    stub = _StubClient()
+    stub.queue(_FakeResponse(500, {"error": "datatable read failed"}))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.get("/api/review/audit-log")
+    assert res.status_code == 502
+
+
+def test_audit_log_502s_when_n8n_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Boom(_StubClient):
+        async def get(self, url: str, **kwargs: Any) -> _FakeResponse:
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(
+        "voice_agent.api.review.httpx.AsyncClient", lambda **_: _Boom()
+    )
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.get("/api/review/audit-log")
+    assert res.status_code == 502
+    assert "n8n unreachable" in res.json()["detail"]

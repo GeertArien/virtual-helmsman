@@ -1,6 +1,6 @@
 """HTTP endpoints for the HITL chunk-review flow.
 
-Three routes mounted at ``/api/review``:
+Four routes mounted at ``/api/review``:
 
 * ``POST /api/review/upload``                 -- forward multipart to
   ``<n8n>/webhook/review/upload``; returns n8n's 202 body unchanged.
@@ -11,6 +11,10 @@ Three routes mounted at ``/api/review``:
   ``resume_url`` by re-fetching the pending list, then forward the decisions
   JSON to it. Returns 404 if the batch is no longer pending (someone else
   already submitted, or the workflow timed out).
+* ``GET  /api/review/audit-log``              -- pass through
+  ``<n8n>/webhook/audit-log`` with the ``limit`` / ``actie`` / ``since`` query
+  params forwarded verbatim. Surfaces ingestion outcomes for the UI's
+  recent-activity feed.
 
 Each endpoint returns HTTP 503 with a "configure review.<field>" message
 until ``ReviewConfig.n8n_base_url`` is set.
@@ -21,7 +25,7 @@ from __future__ import annotations
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 
 from voice_agent.config import ReviewConfig
 from voice_agent.logging_setup import get_logger
@@ -287,5 +291,59 @@ def create_review_router(cfg: ReviewConfig) -> APIRouter:
             return {"status": "ok", "n8n": res.json()}
         except ValueError:
             return {"status": "ok", "n8n": {"raw": res.text}}
+
+    # ---- AUDIT LOG -----------------------------------------------------
+    @router.get("/audit-log")
+    async def audit_log(
+        limit: int | None = Query(default=None, ge=1, le=500),
+        actie: str | None = Query(default=None),
+        since: str | None = Query(default=None),
+    ) -> dict[str, Any]:
+        """Forward to ``<n8n>/webhook/audit-log``.
+
+        n8n already validates/clamps the three query params (limit is capped
+        at 500, bad ``since`` falls back to no-filter), so we just pass them
+        through. Returning the body verbatim keeps the contract honest --
+        the frontend renders ``entries[].actie`` / ``resultaat`` directly.
+        """
+        if not cfg.n8n_base_url:
+            raise _missing("n8n_base_url")
+
+        params: dict[str, str] = {}
+        if limit is not None:
+            params["limit"] = str(limit)
+        if actie:
+            params["actie"] = actie
+        if since:
+            params["since"] = since
+
+        url = cfg.n8n_base_url.rstrip("/") + cfg.audit_log_path
+        try:
+            res = await client.get(url, params=params or None)
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
+
+        if res.status_code >= 400:
+            try:
+                detail = res.json()
+            except ValueError:
+                detail = res.text
+            raise HTTPException(
+                status_code=502,
+                detail={"upstream_status": res.status_code, "n8n": detail},
+            )
+
+        try:
+            body = res.json()
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"n8n returned non-JSON for audit-log: {exc}"
+            ) from exc
+        if not isinstance(body, dict):
+            raise HTTPException(
+                status_code=502,
+                detail="n8n returned a non-object body for audit-log.",
+            )
+        return body
 
     return router

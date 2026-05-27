@@ -86,6 +86,7 @@ review:
   n8n_base_url: "http://127.0.0.1:5678"   # n8n's host alias is docker-internal
   upload_path: /webhook/review/upload
   pending_path: /webhook/review/pending
+  audit_log_path: /webhook/audit-log
   # Pre-fill values for the upload form. The webhook treats Document_Type and
   # Collection_Name as required; Categories and Chunking_Strategy fall back to
   # the webhook's own defaults when omitted.
