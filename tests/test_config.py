@@ -18,7 +18,10 @@ def _minimal() -> dict[str, Any]:
     return {
         "stt": {"model": "nvidia/parakeet-tdt-1.1b"},
         "tts": {"voice": "af_bella"},
-        "llm": {"base_url": "http://llm-server:8000/v1", "model": "qwen3"},
+        "llm": {
+            "base_url": "http://llm-server:8000/v1",
+            "model": "nvidia/nemotron-3-nano-4b",
+        },
     }
 
 

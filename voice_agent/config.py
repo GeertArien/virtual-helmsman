@@ -61,7 +61,14 @@ class TurnConfig(_Base):
 
 class LlmConfig(_Base):
     base_url: str
-    model: str
+    # The set of LLMs we've evaluated for the helmsman's JSON-structured
+    # output path. Adding another model means adding it here -- this keeps
+    # config.yaml and the /config UI dropdown in lockstep, and surfaces
+    # typos as a clear ValidationError instead of a silent LM Studio 404.
+    model: Literal[
+        "unsloth/gemma-4-e4b-it",
+        "nvidia/nemotron-3-nano-4b",
+    ]
     api_key_env: str = "LLM_API_KEY"
     timeout_seconds: float = 30.0
     max_retries: int = 1
