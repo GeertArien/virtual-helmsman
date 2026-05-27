@@ -14,7 +14,6 @@
   type NavLink = { href: string; label: string };
   const links: NavLink[] = [
     { href: '/', label: 'Monitor' },
-    { href: '/review', label: 'Review' },
     { href: '/documents', label: 'Documents' }
   ];
 

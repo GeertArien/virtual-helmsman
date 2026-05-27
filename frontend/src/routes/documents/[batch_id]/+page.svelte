@@ -142,8 +142,9 @@
         return base;
       });
       await submitDecisions(batchId, payload);
-      // Done -- back to the list.
-      await goto('/review');
+      // Done -- back to the documents page; the audit panel there will
+      // pick up the new row on its next refresh tick.
+      await goto('/documents');
     } catch (err) {
       submitError =
         err instanceof ApiError
@@ -153,7 +154,7 @@
             : 'Submit failed';
       if (err instanceof ApiError && err.status === 404) {
         // The batch is gone (already resumed or stale URL). Bounce to the list.
-        await goto('/review');
+        await goto('/documents');
       }
     } finally {
       submitting = false;
@@ -173,7 +174,7 @@
 
 <main>
   <header class="toolbar">
-    <a href="/review" class="back">← Back</a>
+    <a href="/documents" class="back">← Back</a>
     {#if load.kind === 'ready'}
       <div class="title">
         <div class="filename">{load.batch.filename}</div>
@@ -194,7 +195,7 @@
   {:else if load.kind === 'missing'}
     <div class="status warn" role="alert">
       <strong>Batch not pending anymore.</strong>
-      Someone may have already submitted it. <a href="/review">Back to the queue</a>.
+      Someone may have already submitted it. <a href="/documents">Back to documents</a>.
     </div>
   {:else if load.kind === 'error'}
     <div class="status err" role="alert">
@@ -282,7 +283,7 @@
         <div class="status err inline">{submitError}</div>
       {/if}
       <div class="submit-actions">
-        <a href="/review" class="ghost-link">Cancel</a>
+        <a href="/documents" class="ghost-link">Cancel</a>
         <button type="button" class="primary" onclick={submit} disabled={!canSubmit}>
           {submitting ? 'Submitting…' : 'Submit decisions'}
         </button>

@@ -269,6 +269,51 @@ export async function submitDecisions(
   if (!res.ok) throw await readError(res);
 }
 
+// --- Audit log (n8n datatable feed proxied through /api/review) -------------
+
+/** One row from the `audit-log-maritime` datatable. `resultaat` is a free-text
+ *  Dutch summary (e.g. "Succes — HITL batch ... → approved=8 / edited=1 ...").
+ *  v1 ingestion writes three patterns: success, all-rejected, PDF-extract-fail. */
+export interface AuditEntry {
+  id: number;
+  createdAt: string;
+  document_naam: string;
+  actie: string;
+  resultaat: string;
+}
+
+export interface AuditLogResponse {
+  total_in_log: number;
+  total_returned: number;
+  applied_filters: { limit: number; actie: string | null; since: string | null };
+  entries: AuditEntry[];
+}
+
+export interface AuditLogQuery {
+  /** Max rows to return. n8n caps at 500. */
+  limit?: number;
+  /** Exact-match filter on the `actie` column (e.g. "ingestie_hitl"). */
+  actie?: string;
+  /** ISO-8601 lower bound on `createdAt`. */
+  since?: string;
+}
+
+/** GET /api/review/audit-log -- recent ingestion outcomes for the activity feed. */
+export async function fetchAuditLog(
+  query: AuditLogQuery = {}
+): Promise<AuditLogResponse> {
+  const params = new URLSearchParams();
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.actie) params.set('actie', query.actie);
+  if (query.since) params.set('since', query.since);
+  const qs = params.toString();
+  const res = await fetch(
+    `${backendUrl()}/api/review/audit-log${qs ? `?${qs}` : ''}`
+  );
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as AuditLogResponse;
+}
+
 // --- WebSocket --------------------------------------------------------------
 
 export type ConnectionState = 'connecting' | 'open' | 'closed';

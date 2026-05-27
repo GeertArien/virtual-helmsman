@@ -1,13 +1,22 @@
 <script lang="ts">
+  import AuditLogPanel from '$lib/components/AuditLogPanel.svelte';
   import DeleteDocumentPanel from '$lib/components/DeleteDocumentPanel.svelte';
+  import PendingReviewPanel from '$lib/components/PendingReviewPanel.svelte';
+
+  /** Bumped each time the pending panel reports a successful upload or
+   *  whenever the per-batch review submit comes back -- the audit panel
+   *  reacts to the bump and re-fetches. Keeps the two panels decoupled
+   *  without a shared store. */
+  let auditRefreshKey = $state(0);
+
+  function bumpAudit() {
+    auditRefreshKey += 1;
+  }
 </script>
 
 <main>
-  <p class="hint">
-    This page manages documents already ingested into qdrant. To add a new
-    document, head to <a href="/review">Review</a> — uploads go through an n8n
-    workflow with a human-in-the-loop chunk review step.
-  </p>
+  <PendingReviewPanel onUploaded={bumpAudit} />
+  <AuditLogPanel refreshKey={auditRefreshKey} />
   <DeleteDocumentPanel />
 </main>
 
@@ -17,20 +26,9 @@
     flex-direction: column;
     gap: 0.75rem;
     padding: 0.75rem;
-    height: calc(100vh - 3.5rem);
-    min-height: 0;
+    /* No fixed height -- the page scrolls naturally as panels stack. */
     max-width: 60rem;
     margin: 0 auto;
     width: 100%;
   }
-  .hint {
-    margin: 0;
-    padding: 0.6rem 0.85rem;
-    background: var(--bg-elev);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--fg-muted);
-    font-size: 0.85rem;
-  }
-  .hint a { color: var(--accent); }
 </style>

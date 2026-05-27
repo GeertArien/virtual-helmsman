@@ -8,7 +8,9 @@
     | { kind: 'ready'; batches: PendingBatch[] }
     | { kind: 'error'; message: string };
 
-  /** Poll cadence while sitting on the list. Matches the contract example. */
+  let { onUploaded = () => {} }: { onUploaded?: () => void } = $props();
+
+  /** Poll cadence while sitting on the panel. Matches the contract example. */
   const POLL_MS = 3000;
 
   let load = $state<LoadState>({ kind: 'loading' });
@@ -47,6 +49,13 @@
     pollHandle = null;
   }
 
+  function onUploadComplete() {
+    // Surface to the parent (so the audit panel can refresh too) and kick
+    // the pending list immediately rather than waiting for the next tick.
+    onUploaded();
+    void refresh();
+  }
+
   function fmtAge(iso: string): string {
     const t = new Date(iso).getTime();
     if (Number.isNaN(t)) return iso;
@@ -61,22 +70,24 @@
   onDestroy(stopPolling);
 </script>
 
-<main>
-  <header class="toolbar">
-    <div class="title">
-      <h1>Pending review</h1>
+<section class="panel">
+  <div class="header">
+    <h2>Pending review</h2>
+    <div class="header-meta">
       {#if load.kind === 'ready'}
-        <span class="count">{load.batches.length} batch{load.batches.length === 1 ? '' : 'es'}</span>
+        <span class="count mono">{load.batches.length} batch{load.batches.length === 1 ? '' : 'es'}</span>
       {/if}
       {#if lastUpdated}
         <span class="updated mono">updated {fmtAge(lastUpdated.toISOString())}</span>
       {/if}
-    </div>
-    <div class="actions">
       <button type="button" class="ghost" onclick={refresh}>Refresh</button>
       <button type="button" class="primary" onclick={() => (uploadOpen = true)}>+ New upload</button>
     </div>
-  </header>
+  </div>
+  <p class="hint">
+    Each batch is a PDF that the n8n ingestion workflow has chunked and is
+    waiting for a human to approve. Click a row to review its chunks.
+  </p>
 
   {#if load.kind === 'loading'}
     <div class="empty">Loading pending batches…</div>
@@ -90,7 +101,7 @@
     <ul class="batches">
       {#each load.batches as batch (batch.batch_id)}
         <li>
-          <a class="batch" href={`/review/${encodeURIComponent(batch.batch_id)}`}>
+          <a class="batch" href={`/documents/${encodeURIComponent(batch.batch_id)}`}>
             <div class="batch-main">
               <div class="filename">{batch.filename}</div>
               <div class="meta mono">
@@ -107,38 +118,45 @@
       {/each}
     </ul>
   {/if}
-</main>
+</section>
 
-<UploadDialog bind:open={uploadOpen} onUploaded={refresh} />
+<UploadDialog bind:open={uploadOpen} onUploaded={onUploadComplete} />
 
 <style>
-  main {
+  .panel {
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
     display: flex;
     flex-direction: column;
-    gap: 0.75rem;
-    padding: 0.75rem;
-    height: calc(100vh - 3.5rem);
+    gap: 0.65rem;
     min-height: 0;
-    max-width: 60rem;
-    margin: 0 auto;
-    width: 100%;
   }
-  .toolbar {
+  .header {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 0.5rem;
+    flex-wrap: wrap;
   }
-  .title { display: flex; align-items: baseline; gap: 0.75rem; }
-  h1 { margin: 0; font-size: 1.05rem; font-weight: 600; }
-  .count { color: var(--fg-muted); font-size: 0.85rem; }
-  .updated { color: var(--fg-muted); font-size: 0.75rem; }
-  .actions { display: flex; gap: 0.4rem; }
+  h2 {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--fg-muted);
+    margin: 0;
+    font-weight: 600;
+  }
+  .header-meta { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+  .count { color: var(--fg-muted); font-size: 0.8rem; }
+  .updated { color: var(--fg-muted); font-size: 0.72rem; }
+  .hint { margin: 0; color: var(--fg-muted); font-size: 0.85rem; }
 
   button {
     border-radius: 4px;
-    padding: 0.4rem 0.85rem;
-    font-size: 0.85rem;
+    padding: 0.35rem 0.7rem;
+    font-size: 0.8rem;
     cursor: pointer;
     border: 1px solid var(--border);
     background: var(--bg-elev-2);
@@ -150,8 +168,8 @@
   button.ghost:hover { color: var(--fg); }
 
   .empty {
-    padding: 1rem;
-    background: var(--bg-elev);
+    padding: 0.75rem;
+    background: var(--bg-elev-2);
     border: 1px solid var(--border);
     border-radius: 4px;
     color: var(--fg-muted);
@@ -164,21 +182,21 @@
   }
   .status.err { border-color: var(--bad); background: rgba(248, 81, 73, 0.08); }
 
-  .batches { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; overflow-y: auto; min-height: 0; }
+  .batches { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
   .batch {
     display: flex;
     justify-content: space-between;
     align-items: center;
     gap: 0.75rem;
-    padding: 0.6rem 0.85rem;
-    background: var(--bg-elev);
+    padding: 0.55rem 0.75rem;
+    background: var(--bg-elev-2);
     border: 1px solid var(--border);
     border-radius: 4px;
     color: inherit;
     text-decoration: none;
     transition: background 80ms ease, border-color 80ms ease;
   }
-  .batch:hover { background: var(--bg-elev-2); border-color: var(--accent); }
+  .batch:hover { border-color: var(--accent); }
   .batch-main { min-width: 0; flex: 1; }
   .filename { font-size: 0.95rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .meta { color: var(--fg-muted); font-size: 0.75rem; display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.2rem; }
