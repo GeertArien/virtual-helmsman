@@ -14,7 +14,8 @@
   type NavLink = { href: string; label: string };
   const links: NavLink[] = [
     { href: '/', label: 'Monitor' },
-    { href: '/documents', label: 'Documents' }
+    { href: '/documents', label: 'Documents' },
+    { href: '/config', label: 'Config' }
   ];
 
   function isActive(href: string): boolean {
