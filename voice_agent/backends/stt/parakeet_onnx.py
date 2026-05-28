@@ -46,6 +46,7 @@ class ParakeetOnnxSTTService(SegmentedSTTService):
         model: str,
         device: str = "cuda",
         language: str = "en",
+        quantization: str | None = None,
         **kwargs: Any,
     ) -> None:
         # Provide a complete settings store so the base class does not warn
@@ -57,17 +58,37 @@ class ParakeetOnnxSTTService(SegmentedSTTService):
         self._log = get_logger("stt")
         self._language = to_language(language)
         self._model_name = model
-        self._asr = self._load_model(model, device)
+        self._asr = self._load_model(model, device, quantization)
 
-    def _load_model(self, model: str, device: str) -> Any:
+    def _load_model(
+        self,
+        model: str,
+        device: str,
+        quantization: str | None,
+    ) -> Any:
         # Imported lazily so onnx-asr need not be importable to load this module.
         import onnx_asr
 
         self._log.info(
-            "stt_model_loading", backend="parakeet_onnx", model=model, device=device
+            "stt_model_loading",
+            backend="parakeet_onnx",
+            model=model,
+            device=device,
+            quantization=quantization,
         )
-        asr = onnx_asr.load_model(model, providers=_providers(device))
-        self._log.info("stt_model_loaded", backend="parakeet_onnx", model=model)
+        # ``quantization`` is forwarded to onnx-asr's loader, which resolves
+        # the matching variant (e.g. ``encoder-model.int8.onnx``) from the
+        # Hugging Face repo. ``None`` keeps the FP32 default.
+        load_kwargs: dict[str, Any] = {"providers": _providers(device)}
+        if quantization is not None:
+            load_kwargs["quantization"] = quantization
+        asr = onnx_asr.load_model(model, **load_kwargs)
+        self._log.info(
+            "stt_model_loaded",
+            backend="parakeet_onnx",
+            model=model,
+            quantization=quantization,
+        )
         return asr
 
     async def run_stt(self, audio: bytes) -> AsyncGenerator[Frame | None, None]:
@@ -104,4 +125,7 @@ def build_stt(config: Any) -> ParakeetOnnxSTTService:
         model=config.model,
         device=config.device,
         language=config.language,
+        # SttConfig defines this for parakeet_onnx; the other STT backends
+        # ignore the field (they don't pull it from config here).
+        quantization=getattr(config, "quantization", None),
     )

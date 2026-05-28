@@ -121,3 +121,39 @@ def test_turn_factory_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_turn_factory_rejects_unknown_backend() -> None:
     with pytest.raises(ValueError):
         turn_factory.create_turn(SimpleNamespace(backend="bogus"))
+
+
+# --- parakeet_onnx._providers helper -------------------------------------
+
+
+def test_providers_cuda_lists_cuda_then_cpu_fallback() -> None:
+    from voice_agent.backends.stt.parakeet_onnx import _providers
+
+    assert _providers("cuda") == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+
+def test_providers_cpu_is_just_cpu() -> None:
+    from voice_agent.backends.stt.parakeet_onnx import _providers
+
+    assert _providers("cpu") == ["CPUExecutionProvider"]
+
+
+def test_stt_config_quantization_defaults_to_none_and_accepts_int8() -> None:
+    """`quantization` is opt-in; only int8 is in the Literal for now."""
+    from voice_agent.config import SttConfig
+
+    default = SttConfig(model="nemo-parakeet-tdt-0.6b-v2")
+    assert default.quantization is None
+
+    q = SttConfig(model="nemo-parakeet-tdt-0.6b-v2", quantization="int8")
+    assert q.quantization == "int8"
+
+
+def test_stt_config_rejects_unknown_quantization() -> None:
+    """Pydantic Literal catches typos before they reach onnx-asr."""
+    from pydantic import ValidationError
+
+    from voice_agent.config import SttConfig
+
+    with pytest.raises(ValidationError):
+        SttConfig(model="nemo-parakeet-tdt-0.6b-v2", quantization="fp4")  # type: ignore[arg-type]

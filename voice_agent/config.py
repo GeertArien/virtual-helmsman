@@ -37,6 +37,16 @@ class SttConfig(_Base):
     model: str
     device: str = "cuda"
     language: str = "en"
+    # Pre-quantized weights variant published alongside the FP32 baseline.
+    # ``None`` (default) -> FP32 weights (~2.4 GB encoder for Parakeet TDT
+    # 0.6B v2). ``"int8"`` -> INT8 encoder (~700 MB) -- about a 4x VRAM
+    # reduction on the dominant cost, with a 1-2% relative WER hit that
+    # is negligible for the helmsman command vocabulary. Forwarded to
+    # ``onnx_asr.load_model(quantization=...)``; only applies to the
+    # parakeet_onnx backend (and only when the upstream repo publishes
+    # the matching files -- istupakov/parakeet-tdt-0.6b-v2-onnx and v3-
+    # onnx both ship int8 variants).
+    quantization: Literal["int8"] | None = None
 
 
 class TtsConfig(_Base):
