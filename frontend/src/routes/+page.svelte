@@ -35,9 +35,13 @@
     gap: 0.75rem;
     min-height: 0;
   }
-  /* The conversation panel grows to fill, the chat panel pins to the bottom
-     of the column with its own intrinsic height. */
-  .left :global(:first-child) { flex: 1; min-height: 0; }
+  /* The conversation panel (the first *direct* child of .left) grows to
+     fill; the chat panel pins to the bottom with its own intrinsic height.
+     The `>` is load-bearing: without it the selector matches every
+     :first-child anywhere in the subtree -- including the h2 inside the
+     panel and the first row inside .log -- which gave them flex: 1 and
+     made them fight the real grow-target for space. */
+  .left > :global(:first-child) { flex: 1; min-height: 0; }
   @media (max-width: 800px) {
     main {
       grid-template-columns: 1fr;

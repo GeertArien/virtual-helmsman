@@ -155,6 +155,12 @@
     flex-wrap: wrap;
   }
   .toggle {
+    /* Flex-grow inside the .mic-row flex container so the toggle pill
+       stretches across the available row width; the hint text wraps to
+       the next line. (This used to come from a stray over-broad
+       :global(:first-child) selector on the page; now expressed where
+       it actually belongs.) */
+    flex: 1;
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
