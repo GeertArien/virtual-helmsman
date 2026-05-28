@@ -36,6 +36,7 @@ Content-Type: application/json
 {
   "chatInput": "What does COLREGS Rule 15 require?",
   "rerank": true,
+  "model": "unsloth/gemma-4-e4b-it",
   "sessionId": "optional-uuid-for-conversation-continuity"
 }
 ```
@@ -44,6 +45,7 @@ Content-Type: application/json
 |---|---|---|---|---|
 | `chatInput` | string | yes | — | The user's message. Routed by the intent classifier into either the command parser or the RAG branch. |
 | `rerank` | boolean | no | `true` | Toggles the LLM-as-a-reranker step in the RAG branch. `false` bypasses it and feeds RRF top-3 directly into adjacent-chunk expansion. Has no effect on the command branch. |
+| `model` | string | no | `unsloth/gemma-4-e4b-it` | LM Studio model identifier used for all four LLM calls in this workflow (intent-classify, command-parse, LLM-rerank, RAG-answer). Must be a model currently loaded in your LM Studio Local Server. Trailing whitespace is stripped; empty string and missing field both fall back to the default. The embedding model (`bge-m3`) is **not** parameterisable — it is tied to the dense-vector dimension of the Qdrant collection. |
 | `sessionId` | string | no | n8n-generated | Identifies a chat session. Affects nothing structural in the current workflow (we deliberately don't carry conversation memory in v1) but is forwarded to the chatTrigger. |
 
 Any additional fields are accepted and accessible inside the workflow via
@@ -73,6 +75,24 @@ Either way, the downstream Code nodes (*Format Command Reply* / *Parse RAG Respo
 / *Format Question Reply*) are defensive: they emit a parse-failure shape rather
 than crashing if the LLM somehow produces invalid output. The webapp can rely on
 the canonical shape regardless of which enforcement layer is active.
+
+### Audit-log step (iteration 9)
+
+Each request also writes one row to the `audit-log-maritime` n8n datatable on its
+way out:
+
+| Field | Command branch value | Question branch value |
+|---|---|---|
+| `createdAt` | auto | auto |
+| `document_naam` | `"n.v.t. (command)"` | `source.filename` or `"n.v.t."` |
+| `actie` | `"command_runtime"` | `"question_runtime"` |
+| `resultaat` | `action_type=<type> \| output=<first 120 chars>` | `chunk=<id> \| citation_reliable=<bool> \| parse_failure=<bool> \| output=<first 120 chars>` |
+
+The audit-log nodes (*Log Runtime Command* / *Log Runtime Question*) are
+side-effects; their inserted-row output does **not** reach the caller. A
+terminal *Re-emit Reply* Code node restores the canonical 5-field response
+shape before the webhook returns. This means: the API contract is unchanged —
+the audit-log writes are transparent to the caller.
 
 ### Canonical schema
 
@@ -164,10 +184,36 @@ and `output` carries the cleaned model text for the operator to see.
 ### curl
 
 ```bash
+# Default model (unsloth/gemma-4-e4b-it)
 curl -X POST http://localhost:5678/webhook/helmsman \
   -H "Content-Type: application/json" \
   -d '{"chatInput": "hard to starboard 20 degrees"}'
+
+# Specific model — pass the LM Studio identifier exactly as it appears in
+# LM Studio → Developer tab → Local Server. The model must be loaded.
+curl -X POST http://localhost:5678/webhook/helmsman \
+  -H "Content-Type: application/json" \
+  -d '{
+    "chatInput": "What does COLREGS Rule 15 require?",
+    "model": "unsloth/gemma-4-e4b-it"
+  }'
 ```
+
+### Per-call model selection — caveats
+
+- The embedding model (`bge-m3`) is fixed. Swapping the chat model does *not* re-embed
+  any chunks; retrieval quality is independent of the `model` field.
+- Different chat models have different reliability characteristics on the RAG branch's
+  `response_format: json_schema` mode. Gemma 4 E4B is verified working; Qwen-class
+  models with native function-calling work; very small (< 3B) models may degrade
+  schema-compliance. If you see `parse_failure: true` in the response after switching
+  models, the model probably ignored the schema constraint.
+- If the supplied model identifier is not loaded in LM Studio, the call returns the
+  upstream LM Studio error (typically HTTP 400 with *"model not found"*) bubbled
+  through n8n. There is no allowlist enforced workflow-side.
+- The model identifier is applied uniformly to all four LLM calls in the request:
+  intent-classify, command-parse (langchain Agent), LLM-rerank (if `rerank: true`),
+  and RAG-answer. There is no separate per-step override in v1.
 
 ### JavaScript (fetch)
 

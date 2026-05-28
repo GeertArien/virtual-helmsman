@@ -87,6 +87,7 @@ def test_factory_dispatches_to_n8n() -> None:
     cfg = SimpleNamespace(
         backend="n8n",
         base_url="http://localhost:5678",
+        model="unsloth/gemma-4-e4b-it",
         webhook_path="/webhook/helmsman",
         rerank=True,
         timeout_seconds=60.0,
@@ -230,9 +231,12 @@ async def _drive(
     return pushed
 
 
-def _make_n8n_service(stub: _StubClient) -> N8nLLMService:
+def _make_n8n_service(
+    stub: _StubClient, model: str = "unsloth/gemma-4-e4b-it"
+) -> N8nLLMService:
     proc = N8nLLMService(
         base_url="http://n8n:5678",
+        model=model,
         webhook_path="/webhook/helmsman",
         rerank=True,
         timeout_seconds=10.0,
@@ -284,12 +288,31 @@ async def test_n8n_command_emits_start_text_end_triple() -> None:
     parsed = parse_response(pushed[1].text)
     assert isinstance(parsed.action, RudderAction)
     assert parsed.response == "Starboard twenty, aye."
-    # n8n got the right shape.
+    # n8n got the right shape -- chatInput + rerank + model per API.md.
     assert stub.calls[0]["url"] == "http://n8n:5678/webhook/helmsman"
     assert stub.calls[0]["kwargs"]["json"] == {
         "chatInput": "come to starboard twenty",
         "rerank": True,
+        "model": "unsloth/gemma-4-e4b-it",
     }
+
+
+async def test_n8n_uses_configured_model() -> None:
+    """The model identifier flows from config through to the POST body."""
+    stub = _StubClient()
+    stub.queue(
+        _FakeResponse(
+            200,
+            {
+                "intent": "command",
+                "output": "Aye.",
+                "action": {"type": "status_query", "query": "heading"},
+            },
+        )
+    )
+    proc = _make_n8n_service(stub, model="nvidia/nemotron-3-nano-4b")
+    await _drive(proc, _context_with_user("what's our heading"))
+    assert stub.calls[0]["kwargs"]["json"]["model"] == "nvidia/nemotron-3-nano-4b"
 
 
 async def test_n8n_question_emits_answer_action() -> None:
@@ -396,25 +419,33 @@ def test_error_envelope_is_parseable_helmsman_response() -> None:
 # ---------- N8nLlmConfig validation ---------------------------------------
 
 
-def test_llm_config_n8n_does_not_require_model() -> None:
-    """When backend is n8n, model is optional -- n8n picks its own server-side."""
-    from voice_agent.config import LlmConfig
-
-    cfg = LlmConfig(backend="n8n", base_url="http://localhost:5678")
-    assert cfg.model is None
-    assert cfg.webhook_path == "/webhook/helmsman"
-    assert cfg.rerank is True
-
-
-def test_llm_config_openai_compatible_requires_model() -> None:
+def test_llm_config_requires_model_for_both_backends() -> None:
+    """``model`` is forwarded to n8n's POST body too, so it's required
+    regardless of backend (n8n's API.md applies it to every LLM call)."""
     from pydantic import ValidationError
 
     from voice_agent.config import LlmConfig
 
-    with pytest.raises(ValidationError, match="llm.model is required"):
+    with pytest.raises(ValidationError):
         LlmConfig(
             backend="openai_compatible", base_url="http://localhost:1234/v1"
-        )
+        )  # type: ignore[call-arg]
+    with pytest.raises(ValidationError):
+        LlmConfig(backend="n8n", base_url="http://localhost:5678")  # type: ignore[call-arg]
+
+
+def test_llm_config_n8n_accepts_same_model_enum() -> None:
+    """Both supported model strings work for both backends."""
+    from voice_agent.config import LlmConfig
+
+    cfg = LlmConfig(
+        backend="n8n",
+        base_url="http://localhost:5678",
+        model="unsloth/gemma-4-e4b-it",
+    )
+    assert cfg.model == "unsloth/gemma-4-e4b-it"
+    assert cfg.webhook_path == "/webhook/helmsman"
+    assert cfg.rerank is True
 
 
 def test_llm_config_rejects_unknown_backend() -> None:
@@ -423,4 +454,4 @@ def test_llm_config_rejects_unknown_backend() -> None:
     from voice_agent.config import LlmConfig
 
     with pytest.raises(ValidationError):
-        LlmConfig(backend="anthropic", base_url="http://x")  # type: ignore[arg-type]
+        LlmConfig(backend="anthropic", base_url="http://x", model="unsloth/gemma-4-e4b-it")  # type: ignore[arg-type]

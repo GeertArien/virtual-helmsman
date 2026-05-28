@@ -115,12 +115,19 @@ class N8nLLMService(FrameProcessor):
     :class:`pipecat.services.openai.base_llm.BaseOpenAILLMService` does --
     pushes a Start frame, posts to n8n, emits the response text frame,
     pushes an End frame. Other frames pass through unchanged.
+
+    The configured ``model`` is forwarded as the ``model`` field in the
+    POST body. Per ``API.md`` the n8n workflow applies it uniformly to
+    every internal LLM call (intent classify, command parse, rerank,
+    RAG answer) and bubbles the upstream LM Studio "model not found"
+    error if the identifier isn't loaded.
     """
 
     def __init__(
         self,
         *,
         base_url: str,
+        model: str,
         webhook_path: str = "/webhook/helmsman",
         rerank: bool = True,
         timeout_seconds: float = 30.0,
@@ -128,10 +135,11 @@ class N8nLLMService(FrameProcessor):
     ) -> None:
         super().__init__(**kwargs)
         self._url = base_url.rstrip("/") + webhook_path
+        self._model = model
         self._rerank = rerank
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
         self._log = get_logger("llm.n8n")
-        self._log.info("n8n_llm_init", url=self._url, rerank=rerank)
+        self._log.info("n8n_llm_init", url=self._url, model=model, rerank=rerank)
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -165,7 +173,11 @@ class N8nLLMService(FrameProcessor):
         try:
             res = await self._client.post(
                 self._url,
-                json={"chatInput": chat_input, "rerank": self._rerank},
+                json={
+                    "chatInput": chat_input,
+                    "rerank": self._rerank,
+                    "model": self._model,
+                },
             )
         except httpx.RequestError as exc:
             self._log.error("n8n_unreachable", error=str(exc), url=self._url)
@@ -212,6 +224,7 @@ def build_llm(config: Any) -> N8nLLMService:
     """
     return N8nLLMService(
         base_url=config.base_url,
+        model=config.model,
         webhook_path=config.webhook_path,
         rerank=config.rerank,
         timeout_seconds=config.timeout_seconds,

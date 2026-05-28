@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent.backends.simulator.base import EngineOrder
 
@@ -69,7 +69,9 @@ class LlmConfig(_Base):
       no RAG. Uses ``base_url`` + ``model`` + ``api_key_env``.
     * ``n8n`` -- POST to an n8n helmsman webhook (see ``API.md``). Handles
       both command parsing and RAG question-answering. Uses ``base_url``
-      + ``webhook_path`` + ``rerank``.
+      + ``webhook_path`` + ``rerank``. ``model`` is forwarded as the
+      ``model`` field in the POST body; n8n applies it to every LLM call
+      inside the workflow.
 
     Per-field applicability is annotated below. ``timeout_seconds`` applies
     to both -- raise it for ``n8n`` since the RAG branch can take ~10-20s.
@@ -81,16 +83,19 @@ class LlmConfig(_Base):
     base_url: str
     timeout_seconds: float = 30.0
 
-    # --- openai_compatible only ----------------------------------------
+    # --- model ---------------------------------------------------------
     # The set of LLMs we've evaluated for the helmsman's JSON-structured
     # output path. Adding another model means appending here -- keeps
     # config.yaml and the /config UI dropdown in lockstep, and surfaces
     # typos as a clear ValidationError instead of a silent LM Studio 404.
-    # ``None`` when ``backend != "openai_compatible"``.
+    # Required for both backends: openai_compatible sends it directly to
+    # the chat-completion endpoint; n8n forwards it through to LM Studio
+    # as the ``model`` field per ``API.md`` (the n8n workflow uses it for
+    # every LLM call -- intent classify, command parse, rerank, answer).
     model: Literal[
         "unsloth/gemma-4-e4b-it",
         "nvidia/nemotron-3-nano-4b",
-    ] | None = None
+    ]
     api_key_env: str = "LLM_API_KEY"
     max_retries: int = 1
 
@@ -104,21 +109,6 @@ class LlmConfig(_Base):
     def resolved_api_key(self) -> str | None:
         """Return the API key from the env var named by ``api_key_env``."""
         return os.environ.get(self.api_key_env)
-
-    @model_validator(mode="after")
-    def _validate_backend_fields(self) -> "LlmConfig":
-        """Cross-field check: openai_compatible needs a model name.
-
-        We can't make ``model`` unconditionally required because n8n picks
-        its own model server-side, and forcing a placeholder here would be
-        a footgun. So validate at the model level: if you said ``backend:
-        openai_compatible``, you must also pick a model.
-        """
-        if self.backend == "openai_compatible" and self.model is None:
-            raise ValueError(
-                "llm.model is required when llm.backend is 'openai_compatible'."
-            )
-        return self
 
 
 class SimulatorRealConfig(_Base):
