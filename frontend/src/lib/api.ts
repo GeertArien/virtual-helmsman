@@ -379,6 +379,9 @@ export interface JsonSchemaProperty {
   description?: string;
   default?: unknown;
   enum?: unknown[];
+  /** Pydantic emits ``const`` (not ``enum``) for single-value Literals.
+   *  The form normalises this to a one-element enum at render time. */
+  const?: unknown;
   $ref?: string;
   anyOf?: JsonSchemaProperty[];
   allOf?: JsonSchemaProperty[];

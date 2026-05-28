@@ -5,6 +5,9 @@
    * The widget is picked by inspecting the schema:
    *
    *   enum present              -> <select>
+   *   const present             -> <select> (single-value Literal; Pydantic
+   *                                 emits ``const`` rather than a one-item
+   *                                 enum -- normalised at resolve() time)
    *   type=boolean              -> <input type="checkbox">
    *   type=integer              -> <input type="number" step=1>
    *   type=number               -> <input type="number" step=any>
@@ -39,16 +42,23 @@
     onChange: (newValue: unknown) => void;
   } = $props();
 
-  /** Resolve `$ref` once, returning the dereferenced schema. */
+  /** Resolve `$ref` once, returning the dereferenced schema. Also
+   *  normalises Pydantic's ``const`` (emitted for single-value Literals)
+   *  into a one-element ``enum`` so the renderer's existing
+   *  enum-as-<select> branch handles it without a special case. */
   function resolve(s: JsonSchemaProperty): JsonSchemaProperty {
-    if (s.$ref) {
+    let out = s;
+    if (out.$ref) {
       // "#/$defs/Foo" -> rootSchema.$defs.Foo
-      const m = /^#\/\$defs\/(.+)$/.exec(s.$ref);
+      const m = /^#\/\$defs\/(.+)$/.exec(out.$ref);
       if (m && rootSchema.$defs && m[1] in rootSchema.$defs) {
-        return rootSchema.$defs[m[1]];
+        out = rootSchema.$defs[m[1]];
       }
     }
-    return s;
+    if (out.const !== undefined && !out.enum) {
+      out = { ...out, enum: [out.const] };
+    }
+    return out;
   }
 
   /** Pick the "primary" subtype for an anyOf [T, null] union. */
@@ -120,8 +130,15 @@
 
     {#if innerResolved.enum}
       <select
-        value={value as string}
-        onchange={(e) => emit((e.currentTarget as HTMLSelectElement).value)}
+        value={value === null || value === undefined ? '' : (value as string)}
+        onchange={(e) => {
+          const raw = (e.currentTarget as HTMLSelectElement).value;
+          // The (null) option carries value="" so we can host it in the same
+          // <select>. Translate that back to JSON `null` on the way out --
+          // an empty string would fail any Literal validator on the backend.
+          if (raw === '' && nullable) emit(null);
+          else emit(raw);
+        }}
       >
         {#if nullable}
           <option value="">(null)</option>
