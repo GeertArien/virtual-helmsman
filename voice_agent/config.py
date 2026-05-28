@@ -101,9 +101,15 @@ class LlmConfig(_Base):
     # Required for both backends: openai_compatible sends it directly to
     # the chat-completion endpoint; n8n forwards it through to LM Studio
     # as the ``model`` field per ``API.md`` (the n8n workflow uses it for
-    # every LLM call -- intent classify, command parse, rerank, answer).
+    # every LLM call -- intent classify, command parse, rerank, answer)
+    # and also as the ``Model`` field per ``REVIEW_API.md`` for the
+    # ingestion pipeline's doc-summary call.
     model: Literal[
+        "google/gemma-4-e4b",
         "unsloth/gemma-4-e4b-it",
+        "qwen/qwen3.5-9b",
+        "ministral-3-8b-instruct-2512",
+        "google/gemma-4-e2b",
         "nvidia/nemotron-3-nano-4b",
     ]
     api_key_env: str = "LLM_API_KEY"
