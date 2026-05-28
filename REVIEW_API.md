@@ -65,6 +65,7 @@ text parts**:
 | `Collection_Name` | text | yes | Qdrant collection to upsert into. **Default: `maritime_hybrid`** — the same collection the runtime helmsman queries, so reviewed chunks become live knowledge immediately. The webapp can offer a "destination collection" dropdown if you ever want to target a sandbox collection. |
 | `Categories` | text | no | Comma-separated tags (e.g. `"colregs, rules"`). Stored as an array on every chunk's payload. Defaults to `"algemeen"` if omitted. |
 | `Chunking_Strategy` | text | no | One of `paragraph_aware` (default) or `fixed_size`. See *Chunking strategies* below. Unknown values are silently coerced to the default. |
+| `Model` | text | no | LM Studio chat-model identifier used for the document-summary call (the only chat-LLM step in the ingestion pipeline). Default: `unsloth/gemma-4-e4b-it`. Must be loaded in your LM Studio Local Server. **Embedding model is *not* parameterisable** — `bge-m3` is pinned to the Qdrant collection's 1024-dim dense-vector dimension; swapping it would invalidate every existing chunk. Empty/missing values fall back to the default. |
 
 ### Chunking strategies
 
@@ -129,12 +130,33 @@ async function uploadPdf(file, { collectionName = 'maritime_hybrid', categories 
 ### Example — `curl`
 
 ```bash
+# Default chat model (unsloth/gemma-4-e4b-it for the doc-summary call)
 curl -X POST http://localhost:5678/webhook/review/upload \
   -F "pdf=@./Albertkanaal_Pleasure_Boating.pdf" \
   -F "Document_Type=PDF" \
   -F "Collection_Name=maritime_hybrid" \
   -F "Categories=binnenvaart, regelgeving"
+
+# Explicit chat-model override (must be loaded in LM Studio)
+curl -X POST http://localhost:5678/webhook/review/upload \
+  -F "pdf=@./Albertkanaal_Pleasure_Boating.pdf" \
+  -F "Document_Type=PDF" \
+  -F "Collection_Name=maritime_hybrid" \
+  -F "Categories=binnenvaart, regelgeving" \
+  -F "Model=unsloth/gemma-4-e4b-it"
 ```
+
+### Chat-model vs embedding-model — what is and isn't parameterisable
+
+| Stage | Model | Parameterisable per request? |
+|---|---|---|
+| Document summary (`Message a model`) | chat LLM, default `unsloth/gemma-4-e4b-it` | **Yes** — via the `Model` form field |
+| Chunk embedding (`LM Studio Embeddings`) | `text-embedding-bge-m3` | **No** — pinned to the Qdrant collection's 1024-dim dense vector dimension |
+
+If you ever need to swap the embedding model, that is a re-ingestion event:
+create a fresh Qdrant collection with the new dimension, re-upload every PDF
+through this endpoint, retire the old collection. Documented as a deferred
+item in `documentation/future_improvements.md`.
 
 ---
 

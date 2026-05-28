@@ -63,6 +63,7 @@ def create_app(
     control_state: ControlState | None = None,
     inject_text: TextInjector | None = None,
     config_path: Path | None = None,
+    llm_model: str | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to a live ``event_bus`` and session.
 
@@ -95,7 +96,10 @@ def create_app(
         docs_router = create_documents_router(documents)
     review_router: APIRouter | None = None
     if review is not None:
-        review_router = create_review_router(review)
+        # llm_model is forwarded as the default ``Model`` form field on
+        # ingestion uploads -- keeps the doc-summary call inside the n8n
+        # ingestion pipeline on the same model the helmsman LLM path uses.
+        review_router = create_review_router(review, llm_model=llm_model)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:

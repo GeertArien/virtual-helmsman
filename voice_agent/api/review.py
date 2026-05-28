@@ -107,12 +107,21 @@ async def _fetch_pending(
     return parsed
 
 
-def create_review_router(cfg: ReviewConfig) -> APIRouter:
+def create_review_router(
+    cfg: ReviewConfig, *, llm_model: str | None = None
+) -> APIRouter:
     """Build the /api/review router bound to a :class:`ReviewConfig`.
 
     The router holds a long-lived :class:`httpx.AsyncClient` exposed via
     the private ``_http_client`` attribute so :func:`create_app`'s lifespan
     handler can close it at shutdown.
+
+    ``llm_model`` is the LM Studio chat-model identifier used as the
+    default ``Model`` form field on uploads (per ``REVIEW_API.md``). It
+    is normally threaded from ``LlmConfig.model`` so the doc-summary call
+    inside the ingestion pipeline uses the same model the rest of the
+    helmsman LLM path does. Per-request overrides via the ``Model`` form
+    field still win; ``None`` means "let n8n use its own default".
     """
     router = APIRouter(prefix="/api/review", tags=["review"])
     log = get_logger("api.review")
@@ -127,6 +136,7 @@ def create_review_router(cfg: ReviewConfig) -> APIRouter:
         Collection_Name: str = Form(default=""),
         Categories: str | None = Form(default=None),
         Chunking_Strategy: str | None = Form(default=None),
+        Model: str | None = Form(default=None),
     ) -> dict[str, Any]:
         if not cfg.n8n_base_url:
             raise _missing("n8n_base_url")
@@ -143,6 +153,11 @@ def create_review_router(cfg: ReviewConfig) -> APIRouter:
             if Chunking_Strategy is not None
             else cfg.default_chunking_strategy
         )
+        # Model precedence: explicit per-request override > configured
+        # llm.model > omit (n8n falls back to its own default). Empty
+        # string from the form is treated as "use the configured one"
+        # rather than as an explicit empty override.
+        model = Model or llm_model
 
         content = await file.read()
         # n8n takes the first binary part regardless of name; we use "pdf"
@@ -160,6 +175,8 @@ def create_review_router(cfg: ReviewConfig) -> APIRouter:
             "Categories": categories,
             "Chunking_Strategy": chunking_strategy,
         }
+        if model is not None:
+            data["Model"] = model
 
         url = cfg.n8n_base_url.rstrip("/") + cfg.upload_path
         try:
@@ -188,6 +205,7 @@ def create_review_router(cfg: ReviewConfig) -> APIRouter:
             collection_name=collection_name,
             document_type=document_type,
             chunking_strategy=chunking_strategy,
+            model=model,
             n8n_status=res.status_code,
         )
         # Surface the same shape n8n returned, with a safe default if the

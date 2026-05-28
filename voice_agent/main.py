@@ -56,6 +56,9 @@ async def _maybe_start_api(
         control_state=built.control_state,
         inject_text=build_text_injector(built.task, built.llm_context),
         config_path=Path(config_path),
+        # Shared with /api/review/upload as the default `Model` form field
+        # forwarded to the n8n ingestion webhook (see REVIEW_API.md).
+        llm_model=config.llm.model,
     )
     server = ApiServer(app, host=config.api.host, port=config.api.port)
     await server.start()

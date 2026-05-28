@@ -169,6 +169,81 @@ def test_upload_forwards_all_five_fields(monkeypatch: pytest.MonkeyPatch) -> Non
     assert "pdf" in stub.calls[0]["kwargs"]["files"]
 
 
+def test_upload_includes_configured_llm_model_as_Model_field(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Per REVIEW_API.md the ingestion webhook accepts an optional `Model`
+    form field that drives the doc-summary call. We forward whatever the
+    helmsman LLM is configured to use so the two stay in sync."""
+    stub = _StubClient()
+    stub.queue(_FakeResponse(202, {"status": "queued"}))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(
+        event_bus=EventBus(),
+        session=_session(),
+        review=cfg,
+        llm_model="nvidia/nemotron-3-nano-4b",
+    )
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/review/upload",
+            files={"file": ("a.pdf", b"%PDF", "application/pdf")},
+        )
+    assert res.status_code == 200
+    assert stub.calls[0]["kwargs"]["data"]["Model"] == "nvidia/nemotron-3-nano-4b"
+
+
+def test_upload_form_Model_field_overrides_llm_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An explicit Model in the form wins -- per-request overrides are how
+    a power user or script swaps models without rewriting the config."""
+    stub = _StubClient()
+    stub.queue(_FakeResponse(202, {"status": "queued"}))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(
+        event_bus=EventBus(),
+        session=_session(),
+        review=cfg,
+        llm_model="nvidia/nemotron-3-nano-4b",
+    )
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/review/upload",
+            files={"file": ("a.pdf", b"%PDF", "application/pdf")},
+            data={"Model": "unsloth/gemma-4-e4b-it"},
+        )
+    assert res.status_code == 200
+    assert stub.calls[0]["kwargs"]["data"]["Model"] == "unsloth/gemma-4-e4b-it"
+
+
+def test_upload_omits_Model_field_when_neither_configured_nor_form(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No llm_model + no form Model -> don't send the field at all; n8n
+    falls back to its own default (`unsloth/gemma-4-e4b-it` per the
+    contract). Sending an empty string would be wrong because n8n's
+    "empty falls back to default" rule still allows the field to *exist*
+    and confuse audit logging."""
+    stub = _StubClient()
+    stub.queue(_FakeResponse(202, {"status": "queued"}))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/review/upload",
+            files={"file": ("a.pdf", b"%PDF", "application/pdf")},
+        )
+    assert res.status_code == 200
+    assert "Model" not in stub.calls[0]["kwargs"]["data"]
+
+
 def test_upload_falls_back_to_config_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     """Missing/blank form fields use the configured defaults, not empty strings."""
     stub = _StubClient()
