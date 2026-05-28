@@ -22,7 +22,8 @@
     { value: '', label: 'All' },
     { value: 'command_runtime', label: 'Command (runtime)' },
     { value: 'question_runtime', label: 'Question (runtime)' },
-    { value: 'ingestie_hitl', label: 'HITL ingestion' }
+    { value: 'ingestie_hitl', label: 'HITL ingestion' },
+    { value: 'llm_error_ingestion', label: 'Ingestion error' }
   ];
 
   let load = $state<LoadState>({ kind: 'loading' });
@@ -100,18 +101,26 @@
 
   /** Map an entry to an outcome flavour that drives the left-border colour
    *  and the LED dot. Per-actie rules:
-   *  - `ingestie_hitl`: leading Dutch keyword Succes/Fout.
+   *  - any `llm_error_*` actie: always a fail. The prefix is broad on
+   *    purpose so a future `llm_error_helmsman` / `llm_error_classify`
+   *    type lands red without a code change.
+   *  - `ingestie_hitl`: classified by the leading keyword of `resultaat`.
+   *    "Succes" is ok; "Fout" (Dutch) or "All rejected" (English variant
+   *    emitted by *Log All Rejected*) are fails. Anything else is neutral.
    *  - `command_runtime`: `action_type=error` means the LLM refused.
    *  - `question_runtime`: `parse_failure=true` is the upstream-LLM-output
    *    fallback path -- we render it as a fail. `citation_reliable=false`
-   *    is *not* a fail; the answer still exists. */
+   *    is *not* a fail; the answer still exists.
+   */
   function outcomeOf(entry: AuditEntry): Outcome {
-    const a = entry.actie;
+    const a = entry.actie ?? '';
     const r = (entry.resultaat ?? '').trim();
+    if (a.startsWith('llm_error_')) return 'fail';
     if (a === 'ingestie_hitl') {
       const lower = r.toLowerCase();
       if (lower.startsWith('succes')) return 'ok';
       if (lower.startsWith('fout')) return 'fail';
+      if (lower.startsWith('all rejected')) return 'fail';
       return 'neutral';
     }
     if (a === 'command_runtime') {
@@ -230,6 +239,23 @@
             </div>
             {#if parsed.output}
               <div class="quote">{parsed.output}</div>
+            {/if}
+          {:else if entry.actie?.startsWith('llm_error_')}
+            <!-- Structured llm_error_* rows: error=<msg> | http=<code> | input_chars=<n>.
+                 The error string itself can be long, so it goes in the quote;
+                 http / input_chars are short -> chips. -->
+            <div class="meta-row">
+              {#if parsed.http && parsed.http !== 'n.v.t.'}
+                <span class="chip" data-flavor="bad">http: {parsed.http}</span>
+              {/if}
+              {#if parsed.input_chars}
+                <span class="chip" data-flavor="accent">{parsed.input_chars} chars in</span>
+              {/if}
+            </div>
+            {#if parsed.error}
+              <div class="quote err">{parsed.error}</div>
+            {:else}
+              <div class="resultaat">{entry.resultaat}</div>
             {/if}
           {:else}
             <!-- ingestie_hitl and any future / unknown actie -->
@@ -404,6 +430,12 @@
     padding-left: 0.55rem;
     border-left: 2px solid var(--border);
     color: var(--fg-muted);
+  }
+  /* err-flavoured quotes pull the same border colour as the failed-row
+     left border. Used to display llm_error_* messages prominently. */
+  .quote.err {
+    border-left-color: var(--bad);
+    color: var(--fg);
   }
 
   .resultaat {
