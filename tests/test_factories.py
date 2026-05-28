@@ -138,15 +138,16 @@ def test_providers_cpu_is_just_cpu() -> None:
     assert _providers("cpu") == ["CPUExecutionProvider"]
 
 
-def test_stt_config_quantization_defaults_to_none_and_accepts_int8() -> None:
-    """`quantization` is opt-in; only int8 is in the Literal for now."""
+def test_stt_config_quantization_defaults_to_int8_and_accepts_none() -> None:
+    """`quantization` defaults to int8 (smaller VRAM out of the box);
+    explicit None opts back into the FP32 baseline."""
     from voice_agent.config import SttConfig
 
     default = SttConfig(model="nemo-parakeet-tdt-0.6b-v2")
-    assert default.quantization is None
+    assert default.quantization == "int8"
 
-    q = SttConfig(model="nemo-parakeet-tdt-0.6b-v2", quantization="int8")
-    assert q.quantization == "int8"
+    fp32 = SttConfig(model="nemo-parakeet-tdt-0.6b-v2", quantization=None)
+    assert fp32.quantization is None
 
 
 def test_stt_config_rejects_unknown_quantization() -> None:

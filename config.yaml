@@ -3,7 +3,7 @@ stt:
   model: nemo-parakeet-tdt-0.6b-v2
   device: cuda
   language: en
-  quantization: null
+  quantization: int8
 tts:
   backend: kokoro
   voice: af_bella
