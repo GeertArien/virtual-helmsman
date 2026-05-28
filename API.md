@@ -76,6 +76,41 @@ Either way, the downstream Code nodes (*Format Command Reply* / *Parse RAG Respo
 than crashing if the LLM somehow produces invalid output. The webapp can rely on
 the canonical shape regardless of which enforcement layer is active.
 
+### LLM-error response shape (iteration 12 / 13)
+
+If any of the four LLM-calling nodes (Classify Intent, Command Parser, Rerank
+Chunks, RAG Answer) fails — common causes: LM Studio context-length overflow,
+a model not loaded, or LM Studio unreachable — the workflow short-circuits to
+a dedicated error path that writes an audit-log row and returns this canonical
+error response:
+
+```json
+{
+  "intent": "error",
+  "output": "LLM call failed: <upstream error message> (HTTP 400)",
+  "action": {
+    "type": "error",
+    "error_type": "llm_call_failure",
+    "reason": "<upstream error message>",
+    "http_status": 400
+  },
+  "source": null,
+  "raw_model_output": ""
+}
+```
+
+The webapp can switch on `intent === "error"` to display a structured error to
+the operator instead of a hung-request UX. The `error_type` field is held as
+an enum for forward-compatibility, currently with one value (`llm_call_failure`)
+— the workflow no longer attempts to classify the underlying cause of the
+failure (see iteration 13). For root-cause diagnosis the operator correlates
+the `reason` and `http_status` fields with the n8n execution log.
+
+The corresponding audit-log row carries `actie: "llm_error_runtime"` with
+`resultaat: "error=<msg> | http=<status>"`. The audit-log path is independent
+of the caller response — even if the webapp ignores the structured error, the
+row is written.
+
 ### Audit-log step (iteration 9)
 
 Each request also writes one row to the `audit-log-maritime` n8n datatable on its

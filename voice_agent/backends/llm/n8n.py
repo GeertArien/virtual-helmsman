@@ -91,6 +91,15 @@ def _translate_envelope(body: dict[str, Any]) -> str:
     * ``command``: pass ``action`` through verbatim (the schemas align
       since Phase 1); ``response`` is n8n's ``output`` (the spoken
       acknowledgement).
+    * ``error`` (iteration 12/13 of API.md): one of the four internal
+      LLM calls inside the workflow failed (LM Studio unreachable,
+      context overflow, model not loaded, etc.). n8n returns an
+      ``action`` with ``type: "error"`` plus an extra ``http_status``
+      field. We pass the action through -- the extra field is
+      ignored by Pydantic since :class:`ErrorAction` doesn't declare
+      ``extra="forbid"`` -- so the downstream
+      :class:`JsonActionProcessor` publishes an :class:`ActionRefusedEvent`
+      and TTS speaks the ``output`` message verbatim.
     * anything else (``question`` or missing): synthesise an ``answer``
       action so :class:`JsonActionProcessor` parses cleanly; the spoken
       response is n8n's ``output`` (citation already inline per API.md).
@@ -99,7 +108,7 @@ def _translate_envelope(body: dict[str, Any]) -> str:
     output = body.get("output", "")
     action = body.get("action")
 
-    if intent == "command" and isinstance(action, dict):
+    if intent in ("command", "error") and isinstance(action, dict):
         internal_action: dict[str, Any] = action
     else:
         # Question intent (or any unexpected shape) -> answer pseudo-action.

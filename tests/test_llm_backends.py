@@ -172,6 +172,37 @@ def test_translate_missing_intent_falls_back_to_answer() -> None:
     assert parsed.response == "Standing by, sir."
 
 
+def test_translate_error_intent_passes_error_action_through() -> None:
+    """Iteration 12/13 of API.md: when an LLM call inside the workflow
+    fails, n8n returns intent='error' with a structured error action.
+    We pass the action through verbatim so JsonActionProcessor publishes
+    an ActionRefusedEvent rather than swallowing the failure as a Q&A
+    answer. The extra ``http_status`` field in n8n's payload is dropped
+    by Pydantic (ErrorAction doesn't ``extra='forbid'``)."""
+    from voice_agent.actions.schema import ErrorAction
+
+    body = {
+        "intent": "error",
+        "output": "LLM call failed: context length exceeded (HTTP 400)",
+        "action": {
+            "type": "error",
+            "error_type": "llm_call_failure",
+            "reason": "context length exceeded",
+            "http_status": 400,
+        },
+        "source": None,
+        "raw_model_output": "",
+    }
+    parsed = parse_response(_translate_envelope(body))
+    assert isinstance(parsed.action, ErrorAction)
+    assert parsed.action.error_type == "llm_call_failure"
+    assert parsed.action.reason == "context length exceeded"
+    # The spoken text is n8n's `output` -- TTS will say this aloud.
+    assert "context length exceeded" in parsed.response
+    # `http_status` is silently dropped (not on our ErrorAction schema).
+    assert not hasattr(parsed.action, "http_status")
+
+
 # ---------- N8nLLMService.process_frame -----------------------------------
 
 

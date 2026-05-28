@@ -107,6 +107,7 @@ size and the doc-summary LLM call).
 |---|---|---|
 | `4xx` from `fetch()` itself | Network / wrong URL | Show "Could not reach the ingestion service." |
 | 202 returned but batch never appears in pending list | PDF extraction failed (image-only PDF, corrupted file, password-protected). The workflow's `Log Error` node fired and the run terminated quietly. | Surface a timeout after ~30 seconds of polling without seeing the new batch. Suggest checking the n8n executions list. |
+| 202 returned but batch never appears in pending list (LLM-side failure) | The document-summary LLM call failed — most commonly LM Studio context-length overflow, the chosen `Model` not loaded, or LM Studio unreachable. New since iteration 12: `Log LLM Error` writes an audit-log row with `actie: "llm_error_ingestion"`, then the run terminates quietly (no chunks indexed). | Same UX as above: timeout on polling. Then surface the audit-log row via `GET /webhook/audit-log` and look for the most recent `llm_error_ingestion` entry — its `resultaat` says whether it was a context overflow or another failure mode. |
 
 ### Example — JavaScript `fetch`
 
