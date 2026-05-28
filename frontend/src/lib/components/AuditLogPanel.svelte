@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { ApiError, fetchAuditLog, type AuditEntry } from '$lib/api';
 
   type LoadState =
@@ -7,25 +7,28 @@
     | { kind: 'ready'; entries: AuditEntry[]; totalInLog: number }
     | { kind: 'error'; message: string };
 
-  /** Default page size. The contract caps at 500 server-side; 50 is the
-   *  sensible recent-activity tail. */
+  /** Default page size. n8n caps server-side at 500; 50 is a sensible tail. */
   const DEFAULT_LIMIT = 50;
 
-  /** The filter set surfaced in the UI. The contract lists three known
-   *  values; we also offer "all" (no filter). New `actie` values will
-   *  still render — they just won't be selectable here until added. */
+  /** Auto-refresh cadence. Runtime entries (command/question) land in real
+   *  time so the panel needs to keep pulling; 5s is roughly the period
+   *  between turns in the demo without being chatty. */
+  const POLL_MS = 5_000;
+
+  /** The known `actie` filter values surfaced as dropdown options.
+   *  Unknown future actie values still render -- they just don't have a
+   *  dedicated filter button until added here. */
   const ACTIE_FILTERS: { value: string; label: string }[] = [
     { value: '', label: 'All' },
-    { value: 'ingestie_hitl', label: 'HITL ingestion' },
-    { value: 'verwijdering', label: 'Deletion' },
-    { value: 'vraag', label: 'Question' }
+    { value: 'command_runtime', label: 'Command (runtime)' },
+    { value: 'question_runtime', label: 'Question (runtime)' },
+    { value: 'ingestie_hitl', label: 'HITL ingestion' }
   ];
-
-  let { refreshKey = 0 }: { refreshKey?: number } = $props();
 
   let load = $state<LoadState>({ kind: 'loading' });
   let lastUpdated = $state<Date | null>(null);
   let filterActie = $state<string>('');
+  let pollHandle: ReturnType<typeof setTimeout> | null = null;
 
   async function refresh() {
     try {
@@ -48,21 +51,84 @@
     }
   }
 
-  /** Re-fetch whenever the parent bumps `refreshKey` (e.g. after a successful
-   *  submit upstream) or when the user toggles the filter. */
+  function startPolling() {
+    const tick = async () => {
+      await refresh();
+      pollHandle = setTimeout(tick, POLL_MS);
+    };
+    void tick();
+  }
+
+  function stopPolling() {
+    if (pollHandle) clearTimeout(pollHandle);
+    pollHandle = null;
+  }
+
+  /** When the filter changes, restart polling immediately with the new
+   *  filter so the user doesn't wait POLL_MS to see the result. */
   $effect(() => {
-    void refreshKey;
     void filterActie;
-    void refresh();
+    stopPolling();
+    startPolling();
   });
 
-  /** Classify the entry by the leading word of `resultaat`. The legacy Dutch
-   *  patterns are "Succes — …" and "Fout — …"; everything else renders neutral. */
-  function outcomeOf(entry: AuditEntry): 'ok' | 'fail' | 'neutral' {
-    const r = entry.resultaat?.trim().toLowerCase() ?? '';
-    if (r.startsWith('succes')) return 'ok';
-    if (r.startsWith('fout')) return 'fail';
+  /** Parse a `key1=value1 | key2=value2 | output=...` resultaat string into
+   *  an object. The `output=` value is captured greedily so newlines and
+   *  pipe characters inside the spoken answer don't break parsing. */
+  function parseResultaat(resultaat: string | undefined): Record<string, string> {
+    const fields: Record<string, string> = {};
+    if (!resultaat) return fields;
+    // Greedy capture of everything after `output=` -- the spoken text /
+    // RAG answer can contain newlines and pipes.
+    const outMatch = /output=([\s\S]*)$/.exec(resultaat);
+    let head = resultaat;
+    if (outMatch) {
+      fields.output = outMatch[1].trim();
+      head = resultaat.slice(0, outMatch.index);
+    }
+    for (const part of head.split('|')) {
+      const eq = part.indexOf('=');
+      if (eq === -1) continue;
+      const key = part.slice(0, eq).trim();
+      const val = part.slice(eq + 1).trim();
+      if (key) fields[key] = val;
+    }
+    return fields;
+  }
+
+  type Outcome = 'ok' | 'fail' | 'neutral';
+
+  /** Map an entry to an outcome flavour that drives the left-border colour
+   *  and the LED dot. Per-actie rules:
+   *  - `ingestie_hitl`: leading Dutch keyword Succes/Fout.
+   *  - `command_runtime`: `action_type=error` means the LLM refused.
+   *  - `question_runtime`: `parse_failure=true` is the upstream-LLM-output
+   *    fallback path -- we render it as a fail. `citation_reliable=false`
+   *    is *not* a fail; the answer still exists. */
+  function outcomeOf(entry: AuditEntry): Outcome {
+    const a = entry.actie;
+    const r = (entry.resultaat ?? '').trim();
+    if (a === 'ingestie_hitl') {
+      const lower = r.toLowerCase();
+      if (lower.startsWith('succes')) return 'ok';
+      if (lower.startsWith('fout')) return 'fail';
+      return 'neutral';
+    }
+    if (a === 'command_runtime') {
+      return /action_type=error\b/.test(r) ? 'fail' : 'ok';
+    }
+    if (a === 'question_runtime') {
+      return /parse_failure=true\b/.test(r) ? 'fail' : 'ok';
+    }
     return 'neutral';
+  }
+
+  /** Human-readable label for the document column. `n.v.t. (command)` is
+   *  noise; render commands as a dash. */
+  function documentLabel(entry: AuditEntry): string {
+    const d = (entry.document_naam ?? '').trim();
+    if (!d || d.toLowerCase().startsWith('n.v.t.')) return '—';
+    return d;
   }
 
   function fmtDate(iso: string): string {
@@ -81,7 +147,8 @@
     return fmtDate(iso);
   }
 
-  onMount(refresh);
+  onMount(startPolling);
+  onDestroy(stopPolling);
 </script>
 
 <section class="panel">
@@ -108,8 +175,10 @@
     </div>
   </div>
   <p class="hint">
-    Outcomes of the ingestion pipeline as logged by n8n
-    (<code>audit-log-maritime</code>). Newest first; capped at {DEFAULT_LIMIT} rows.
+    Outcomes from the n8n <code>audit-log-maritime</code> datatable: HITL
+    ingestion runs, runtime command parses, and runtime question (RAG)
+    answers. Newest first; capped at {DEFAULT_LIMIT} rows. Auto-refresh every
+    {Math.round(POLL_MS / 1000)}s.
   </p>
 
   {#if load.kind === 'loading'}
@@ -124,14 +193,48 @@
     <ol class="entries">
       {#each load.entries as entry (entry.id)}
         {@const outcome = outcomeOf(entry)}
-        <li class="entry" data-outcome={outcome}>
+        {@const parsed = parseResultaat(entry.resultaat)}
+        {@const doc = documentLabel(entry)}
+        <li class="entry" data-outcome={outcome} data-actie={entry.actie}>
           <div class="entry-head">
             <span class="dot" aria-hidden="true"></span>
-            <span class="document">{entry.document_naam}</span>
+            <span class="document" title={entry.document_naam}>{doc}</span>
             <span class="actie mono">{entry.actie}</span>
             <span class="when mono" title={fmtDate(entry.createdAt)}>{fmtAge(entry.createdAt)}</span>
           </div>
-          <div class="resultaat">{entry.resultaat}</div>
+
+          {#if entry.actie === 'command_runtime'}
+            <div class="meta-row">
+              {#if parsed.action_type}
+                <span class="chip" data-flavor={parsed.action_type === 'error' ? 'bad' : 'accent'}>
+                  action: {parsed.action_type}
+                </span>
+              {/if}
+            </div>
+            {#if parsed.output}
+              <div class="quote">{parsed.output}</div>
+            {/if}
+          {:else if entry.actie === 'question_runtime'}
+            <div class="meta-row">
+              {#if parsed.chunk}
+                <span class="chip" data-flavor="accent">chunk: {parsed.chunk}</span>
+              {/if}
+              {#if parsed.citation_reliable === 'true'}
+                <span class="chip" data-flavor="good">cited</span>
+              {:else if parsed.citation_reliable === 'false'}
+                <span class="chip" data-flavor="warn">cite uncertain</span>
+              {/if}
+              {#if parsed.parse_failure === 'true'}
+                <span class="chip" data-flavor="bad">parse failure</span>
+              {/if}
+            </div>
+            {#if parsed.output}
+              <div class="quote">{parsed.output}</div>
+            {/if}
+          {:else}
+            <!-- ingestie_hitl and any future / unknown actie -->
+            <div class="resultaat">{entry.resultaat}</div>
+          {/if}
         </li>
       {/each}
     </ol>
@@ -216,21 +319,20 @@
     margin: 0;
     display: flex;
     flex-direction: column;
-    gap: 0.35rem;
-    /* The audit log can grow long; cap height with internal scroll so it
-       doesn't push other panels off-screen. */
-    max-height: 22rem;
-    overflow-y: auto;
+    gap: 0.4rem;
+    /* No internal max-height -- the page is scrollable. Past versions
+       capped this at 22rem when it sat inside another panel; on its
+       dedicated /audit route it gets the full viewport. */
   }
   .entry {
     background: var(--bg-elev-2);
     border: 1px solid var(--border);
     border-left-width: 3px;
     border-radius: 4px;
-    padding: 0.45rem 0.7rem;
+    padding: 0.5rem 0.75rem;
     display: flex;
     flex-direction: column;
-    gap: 0.2rem;
+    gap: 0.3rem;
   }
   .entry[data-outcome='ok']      { border-left-color: var(--good); }
   .entry[data-outcome='fail']    { border-left-color: var(--bad); }
@@ -257,7 +359,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 28ch;
+    max-width: 36ch;
   }
   .actie {
     font-size: 0.7rem;
@@ -272,6 +374,38 @@
     color: var(--fg-muted);
     font-size: 0.72rem;
   }
+
+  .meta-row {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+  }
+  .chip {
+    font-size: 0.72rem;
+    padding: 0.1rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg-elev);
+    color: var(--fg-muted);
+    line-height: 1.4;
+  }
+  .chip[data-flavor='accent'] { color: var(--accent); border-color: var(--accent); }
+  .chip[data-flavor='good']   { color: var(--good);   border-color: var(--good);   }
+  .chip[data-flavor='warn']   { color: var(--warn);   border-color: var(--warn);   }
+  .chip[data-flavor='bad']    { color: var(--bad);    border-color: var(--bad);    }
+
+  .quote {
+    color: var(--fg);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    white-space: pre-wrap;
+    word-break: break-word;
+    /* A subtle quote marker so the spoken text reads as a quotation. */
+    padding-left: 0.55rem;
+    border-left: 2px solid var(--border);
+    color: var(--fg-muted);
+  }
+
   .resultaat {
     color: var(--fg);
     font-size: 0.82rem;

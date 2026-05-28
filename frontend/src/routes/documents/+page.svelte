@@ -1,23 +1,15 @@
 <script lang="ts">
-  import AuditLogPanel from '$lib/components/AuditLogPanel.svelte';
   import DeleteDocumentPanel from '$lib/components/DeleteDocumentPanel.svelte';
   import PendingReviewPanel from '$lib/components/PendingReviewPanel.svelte';
-
-  /** Bumped each time the pending panel reports a successful upload or
-   *  whenever the per-batch review submit comes back -- the audit panel
-   *  reacts to the bump and re-fetches. Keeps the two panels decoupled
-   *  without a shared store. */
-  let auditRefreshKey = $state(0);
-
-  function bumpAudit() {
-    auditRefreshKey += 1;
-  }
 </script>
 
 <main>
-  <PendingReviewPanel onUploaded={bumpAudit} />
-  <AuditLogPanel refreshKey={auditRefreshKey} />
+  <PendingReviewPanel />
   <DeleteDocumentPanel />
+  <p class="hint">
+    Ingestion outcomes, runtime command parses, and RAG question answers all
+    flow into the n8n audit log. See <a href="/audit">Audit</a> for the live feed.
+  </p>
 </main>
 
 <style>
@@ -31,4 +23,14 @@
     margin: 0 auto;
     width: 100%;
   }
+  .hint {
+    margin: 0;
+    padding: 0.6rem 0.85rem;
+    background: var(--bg-elev);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+  }
+  .hint a { color: var(--accent); }
 </style>

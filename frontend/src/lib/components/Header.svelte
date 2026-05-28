@@ -15,6 +15,7 @@
   const links: NavLink[] = [
     { href: '/', label: 'Monitor' },
     { href: '/documents', label: 'Documents' },
+    { href: '/audit', label: 'Audit' },
     { href: '/config', label: 'Config' }
   ];
 
