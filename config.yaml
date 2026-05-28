@@ -18,7 +18,7 @@ turn_detection:
 llm:
   backend: n8n
   base_url: http://localhost:5678
-  model: nvidia/nemotron-3-nano-4b
+  model: unsloth/gemma-4-e4b-it
   api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
