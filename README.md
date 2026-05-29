@@ -10,8 +10,6 @@ OpenAI-compatible endpoint (remote, or local on the client via e.g. LM Studio).
 Every model and the simulator client is a swappable backend selected from
 `config.yaml` — no code edits to switch.
 
-See [`TASK.md`](TASK.md) for the full project brief.
-
 ## Architecture
 
 ```

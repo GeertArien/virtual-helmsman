@@ -65,7 +65,7 @@ Enforcement is asymmetric per branch:
   before sampling. Failure modes essentially impossible at the inference layer.
 - **Command branch** — *soft enforcement* via the Command Parser's system prompt,
   with a `JSON.parse` + fallback path in *Format Command Reply*. Measured ~95-99%
-  reliable on Gemma 4 E4B in Module 3. The langchain Agent's LLM-subnode wrapper
+  reliable on Gemma 4 E4B. The langchain Agent's LLM-subnode wrapper
   doesn't expose a schema payload field, so hard enforcement here would require
   either bypassing the Agent (Item 15 in `future_improvements.md` — Structured
   Output Parser via chat-template fix) or replacing it with a direct httpRequest.

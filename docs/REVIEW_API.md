@@ -308,8 +308,7 @@ a clean `{ "status": "ingested", "approved": N, "rejected": M, "edited": K }`.
 Returns recent entries from the `audit-log-maritime` datatable. The same
 datatable that the ingestion pipeline writes to via *Log Success* and
 *Log All Rejected*. Lets the webapp surface a "recent activity" feed —
-useful both for the demo (showing the audit trail right after a HITL
-submission) and for the rubric §1 *Foutafhandeling en logging* story.
+useful for showing the audit trail right after a HITL submission.
 
 ### Request
 
@@ -368,7 +367,7 @@ No body, no auth header.
 | `entries[].createdAt` | ISO timestamp, set automatically by n8n on insert. |
 | `entries[].document_naam` | Filename of the affected document. May be `"onbekend"` for error rows where the filename wasn't yet known. |
 | `entries[].actie` | Event category. See the `actie` filter table above. |
-| `entries[].resultaat` | Free-text summary in Dutch (legacy from Module 2). v1 ingestion writes one of three patterns: `"Succes — HITL batch …"` / `"Fout — alle chunks afgewezen …"` / `"Fout — PDF extractie mislukt"`. |
+| `entries[].resultaat` | Free-text summary in Dutch. v1 ingestion writes one of three patterns: `"Succes — HITL batch …"` / `"Fout — alle chunks afgewezen …"` / `"Fout — PDF extractie mislukt"`. |
 
 Ordering is always **newest-first** (by `createdAt`). No pagination — use
 `limit` + `since` to scope a tail.
@@ -392,7 +391,7 @@ surfaces as a fetch error in the browser.
 After submitting a HITL batch, the webapp polls `/webhook/audit-log?limit=5`
 and renders the most recent row inline as confirmation. The audience sees
 the audit row appear *because* they clicked submit — visible cause/effect
-for the rubric §1 logging story.
+for the logging story.
 
 ### Example — JavaScript `fetch`
 
@@ -487,7 +486,7 @@ to authenticated reviewers.
 
 ---
 
-## Demo flow (live, Les 22)
+## Demo flow (live)
 
 1. Show Docker Desktop — n8n + Qdrant containers running.
 2. Open the webapp `/review` route. Upload the demo PDF via the form (file +
@@ -509,9 +508,8 @@ to authenticated reviewers.
    the reviewed chunks. Show that the answer comes back grounded in the
    reviewed material.
 
-The end-to-end story is **~3 minutes** and is the strongest single
-rubric-aligned moment of the demo (§1 *foutafhandeling getoond* 4pt, §3
-*compliance & ethiek* — humans validating LLM inputs).
+The end-to-end story is **~3 minutes** and highlights humans validating
+LLM inputs — error handling and the compliance/ethics angle on RAG content.
 
 ---
 
@@ -547,4 +545,4 @@ This is useful for sanity-checking the n8n side before the webapp exists.
 
 ---
 
-*Document captured during v1 development of the Eindproject HITL ingestion.*
+*Document captured during v1 development of the HITL ingestion pipeline.*
