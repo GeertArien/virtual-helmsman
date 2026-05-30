@@ -116,6 +116,32 @@ Versions are pinned in `pyproject.toml` as of May 2026. After the first
 successful install on the target client, lock the full transitive set
 (`pip freeze`) for reproducible deploys.
 
+## Quickstart
+
+The agent and the dashboard are two processes. Run each in its own terminal:
+
+```bash
+# Terminal 1 — voice agent + control-plane API (loads the GPU models, opens
+# the audio devices, serves the API on http://127.0.0.1:8765)
+python -m voice_agent.main --config config.yaml
+
+# Terminal 2 — SvelteKit dashboard (http://localhost:5173)
+cd frontend && npm install && npm run dev
+```
+
+Then open <http://localhost:5173>. The dashboard talks to the backend at
+`http://127.0.0.1:8765` by default (override with `?api=http://host:port`), so
+the API must be up for the live transcript, ship state, and chat box to work.
+
+The default `config.yaml` uses the `mock` simulator and has `api.enabled: true`,
+so this runs the full STT→LLM→TTS pipeline with no real simulator attached. The
+**mic starts paused** — type commands in the chat box, or flip the mic toggle to
+record. The LLM (`n8n` by default) and the document/review pages additionally
+need n8n and qdrant reachable; everything degrades gracefully when they aren't.
+
+Details for each side live in [Running the agent](#running-the-agent) and
+[Frontend](#frontend) below.
+
 ## Configuration & backend switching
 
 Everything is driven by a single YAML file (default `./config.yaml`; override
