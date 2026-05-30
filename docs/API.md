@@ -67,9 +67,8 @@ Enforcement is asymmetric per branch:
   with a `JSON.parse` + fallback path in *Format Command Reply*. Measured ~95-99%
   reliable on Gemma 4 E4B. The langchain Agent's LLM-subnode wrapper
   doesn't expose a schema payload field, so hard enforcement here would require
-  either bypassing the Agent (Item 15 in `future_improvements.md` — Structured
-  Output Parser via chat-template fix) or replacing it with a direct httpRequest.
-  Deferred.
+  either bypassing the Agent (via a Structured Output Parser + chat-template
+  fix) or replacing it with a direct httpRequest. Deferred.
 
 Either way, the downstream Code nodes (*Format Command Reply* / *Parse RAG Response*
 / *Format Question Reply*) are defensive: they emit a parse-failure shape rather

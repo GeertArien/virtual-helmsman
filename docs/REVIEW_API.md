@@ -82,9 +82,7 @@ different `Chunking_Strategy` values into the same collection — retrieved
 chunks become filterable on the strategy tag.
 
 A third option — `llm_semantic`, using Gemma to group paragraphs by topic —
-was prototyped and removed before v1 ship. See
-`documentation/future_improvements.md` for what was tried, what broke, and
-what a future revival would need to fix.
+was prototyped and removed before v1 ship.
 
 ### Response — `202 Accepted`
 
@@ -156,8 +154,7 @@ curl -X POST http://localhost:5678/webhook/review/upload \
 
 If you ever need to swap the embedding model, that is a re-ingestion event:
 create a fresh Qdrant collection with the new dimension, re-upload every PDF
-through this endpoint, retire the old collection. Documented as a deferred
-item in `documentation/future_improvements.md`.
+through this endpoint, retire the old collection.
 
 ---
 
