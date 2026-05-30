@@ -1,32 +1,52 @@
 # Virtual Helmsman
 
-A modular local voice agent for a ship simulator. It listens to spoken English
-or Dutch, replies in speech, and executes ship-simulator actions from the LLM's
-structured-JSON output — targeting **< 800 ms voice-to-voice latency** on a
-single NVIDIA client.
+A modular local voice agent for a ship simulator. It listens to spoken
+English, replies in speech, and either executes ship-simulator actions or
+answers maritime questions grounded in a RAG corpus — targeting
+**< 800 ms voice-to-voice latency** on a single NVIDIA client.
 
-STT, TTS, VAD, and turn detection run **locally on the GPU**; the LLM is an
-OpenAI-compatible endpoint (remote, or local on the client via e.g. LM Studio).
+STT, TTS, VAD, and turn detection run **locally on the GPU**. The LLM runs
+over HTTP; two backends ship:
+
+- **`n8n`** *(shipped default)* — POSTs each turn to an n8n helmsman
+  workflow that classifies the input, parses commands, and answers
+  questions via hybrid RAG over qdrant. The n8n workflow proxies the
+  underlying LLM calls to LM Studio (or any OpenAI-compatible server).
+  Full HTTP contract in [`docs/API.md`](docs/API.md); the companion
+  HITL ingestion contract is in [`docs/REVIEW_API.md`](docs/REVIEW_API.md).
+- **`openai_compatible`** — direct chat completion against any
+  OpenAI-shaped `/v1` server (e.g. LM Studio). Command parsing only, no
+  retrieval.
+
 Every model and the simulator client is a swappable backend selected from
 `config.yaml` — no code edits to switch.
 
 ## Architecture
 
 ```
-mic → VAD → STT → smart-turn → LLM → JSON action → TTS → speakers
-                                          │
-                                          ▼
-                                   SimulatorClient
-                                   (real | mock)
+mic → VAD → STT → smart-turn → LLM ─┬─▶ command action ──▶ SimulatorClient
+                                    │                       (real | mock)
+                                    └─▶ answer (n8n RAG)
+                                                │
+                       spoken response or answer ──▶ TTS → speakers
 ```
 
-Built on [Pipecat](https://docs.pipecat.ai). The LLM answers each command with
-one JSON object — an `action` plus a spoken `response` — rather than native tool
-calls, which a small local model emits far less reliably. A processor parses
-that object, dispatches the action to a `SimulatorClient` abstraction, and
-forwards only the spoken response to TTS. `SimulatorClient` has two
-interchangeable implementations: `real` (wraps the in-house UDP-syncing library)
-and `mock` (in-memory, the dev default).
+Built on [Pipecat](https://docs.pipecat.ai). The LLM answers each turn
+with one JSON object — `action` plus a spoken `response` (or an `answer`
+for the n8n RAG branch) — rather than native tool calls, which small
+local models emit far less reliably. A processor parses that object,
+dispatches the action to a `SimulatorClient` abstraction, and forwards
+only the spoken text to TTS.
+
+`SimulatorClient` has two interchangeable implementations: `real` (wraps
+the in-house UDP-syncing library) and `mock` (in-memory, the dev
+default).
+
+With the `n8n` backend, the workflow additionally handles document
+ingestion with human-in-the-loop chunk review — uploaded PDFs are
+chunked, summarized, paused for reviewer approval, then embedded with
+`bge-m3` and upserted into qdrant. The webapp's document/audit/review
+routes drive that flow.
 
 ## Requirements
 
@@ -34,9 +54,11 @@ and `mock` (in-memory, the dev default).
   `pythonnet` have no 3.14 wheels yet. Develop on 3.13.
 - **NVIDIA GPU**, pure CUDA. ≥ 8 GB VRAM comfortable; ≥ 4 GB floor with
   Parakeet-0.6B + Kokoro. No DirectML, no ROCm, no Vulkan.
-- A reachable **remote LLM** exposing an OpenAI-compatible `/v1` API.
-- **Windows** is required only for the `real` simulator backend (it loads a
-  managed .NET DLL via `pythonnet`). The `mock` backend is platform-agnostic.
+- A reachable **LLM endpoint** — either an n8n instance running the
+  helmsman workflow, or any OpenAI-compatible `/v1` server.
+- **Windows** is required only for the `real` simulator backend (it loads
+  a managed .NET DLL via `pythonnet`). The `mock` backend is
+  platform-agnostic.
 
 ## CUDA setup
 
@@ -103,13 +125,14 @@ or `simulator.backend: real`.
 
 Backends shipped in v1:
 
-| Type     | Backends                                                |
-|----------|---------------------------------------------------------|
-| STT      | `parakeet_onnx` (default), `parakeet_nemo`, `whisper`   |
-| TTS      | `kokoro` (default), `piper`                             |
-| VAD      | `silero`                                                |
-| Turn     | `smart_turn_v3` (default), `vad_only` (benchmark baseline) |
-| Simulator| `real`, `mock` (default)                                |
+| Type      | Backends                                                                                  |
+|-----------|-------------------------------------------------------------------------------------------|
+| STT       | `parakeet_onnx` (default), `parakeet_nemo`, `whisper`                                     |
+| TTS       | `kokoro` (default), `piper`                                                               |
+| VAD       | `silero`                                                                                  |
+| Turn      | `smart_turn_v3` (default), `vad_only` (benchmark baseline)                                |
+| LLM       | `n8n` (default; command parsing + RAG), `openai_compatible` (command parsing only)        |
+| Simulator | `real`, `mock` (default)                                                                  |
 
 Ready-made variants are in [`config.examples/`](config.examples/):
 `config.real_sim.yaml`, `config.parakeet_06b.yaml`, `config.whisper.yaml`,
@@ -132,30 +155,63 @@ pipeline runs without a real simulator attached.
 
 ## LLM configuration
 
-The LLM is consumed over HTTP from any OpenAI-compatible `/v1` endpoint —
-remote, or local on the client (e.g. LM Studio). Point `llm.base_url` at it (or
-set `LLM_BASE_URL`). Set the key via `LLM_API_KEY`; servers that need no key
-still work (a placeholder key is sent).
+Both backends are HTTP-only and typically reachable on the same host as
+the agent (LM Studio at 1234, n8n at 5678).
+
+### `n8n` (default)
+
+The agent POSTs each turn to an n8n helmsman workflow that runs intent
+classification, command parsing, RAG retrieval over qdrant (with
+optional LLM reranking), and answer composition. The workflow then
+proxies the underlying LLM calls to LM Studio.
 
 ```yaml
 llm:
-  base_url: http://localhost:1234/v1   # e.g. LM Studio's local server
-  model: nvidia/nemotron-3-nano-4b
+  backend: n8n
+  base_url: http://localhost:5678
+  webhook_path: /webhook/helmsman
+  model: unsloth/gemma-4-e4b-it
+  rerank: true
   api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
 ```
 
-The agent sends a JSON-schema `response_format` so the server constrains output
-to the helmsman action object — the model needs structured-output support, but
-**not** tool-calling support. If the model has a reasoning/thinking mode,
-disable it: reasoning output does not reach the `content` field the agent
-parses. On a local server this is usually a per-model setting.
+`model` is forwarded as the `model` field in the request body — n8n
+applies it to every LLM call in the workflow (intent classify, command
+parse, LLM rerank, RAG answer). `rerank: false` skips the LLM-as-reranker
+step in the RAG branch: faster, lower-quality on long retrieval contexts.
 
-> **Known gap:** `timeout_seconds` / `max_retries` are validated but not yet
-> forwarded to the underlying OpenAI client — `OpenAILLMService` does not
-> expose them in Pipecat 1.2.1. They are kept in the schema for when a clean
-> hook exists. See `voice_agent/backends/llm/openai_compatible.py`.
+Full request/response contract: [`docs/API.md`](docs/API.md).
+
+### `openai_compatible`
+
+Direct chat completion against any OpenAI-shaped `/v1` server. Command
+parsing only; no retrieval. The agent sends a JSON-schema `response_format`
+so the server constrains output to the helmsman action object — the model
+needs structured-output support, but **not** tool calling. Disable any
+reasoning/thinking mode (its output never reaches the `content` field the
+agent parses).
+
+```yaml
+llm:
+  backend: openai_compatible
+  base_url: http://localhost:1234/v1   # e.g. LM Studio's local server
+  model: unsloth/gemma-4-e4b-it
+  api_key_env: LLM_API_KEY
+  timeout_seconds: 30
+  max_retries: 1
+```
+
+Set the key via the env var named by `api_key_env` (default
+`LLM_API_KEY`); servers that need no key still work (a placeholder key
+is sent).
+
+> **Known gap (openai_compatible only):** `timeout_seconds` /
+> `max_retries` are validated but not forwarded to the underlying client
+> — `OpenAILLMService` exposes no hook in Pipecat 1.2.1. The `n8n`
+> backend honours both. See
+> `voice_agent/backends/llm/openai_compatible.py`.
 
 ## Logs and metrics
 
@@ -180,14 +236,15 @@ python scripts/report.py logs/metrics/<session_id>.jsonl
 
 Target: **`voice_to_voice_ms` p95 < 800 ms** over a representative session.
 
-Achieved numbers depend on the GPU and backend combination and must be measured
-on the target client — they are **not yet filled in** (no GPU/LLM was available
-at scaffold time). To populate this table:
+Early measurement on the NVIDIA dev rig shows v2v in the ~1500–3000 ms
+range — well over budget. The local LLM call (with partial RAM offload)
+is the prime suspect; per-component p50/p95 has not been collected yet.
+To populate the table below:
 
 1. `python scripts/bench_stt.py` and `python scripts/bench_tts.py` for
    component latency per backend.
-2. Run a representative session, then `python scripts/report.py` on its metrics
-   file for end-to-end `voice_to_voice_ms`.
+2. Run a representative session, then `python scripts/report.py` on its
+   metrics file for end-to-end `voice_to_voice_ms`.
 
 | Backend combo (STT / TTS / turn)        | v2v p50 | v2v p95 |
 |-----------------------------------------|---------|---------|
@@ -201,12 +258,24 @@ at scaffold time). To populate this table:
 pytest
 ```
 
-`tests/` covers action parsing/dispatch and the JSON action processor against
-the mock simulator, mock-simulator command sequences, config validation + env
-overrides, and factory dispatch. No tests make network calls or load GPU models.
+`tests/` covers:
 
-`scripts/smoke.py` exercises the end-to-end LLM→JSON action→simulator path (no
-audio, no real sim) and **requires a reachable LLM**.
+- Action parsing, dispatch, and the JSON action processor against the
+  mock simulator (`test_actions.py`, `test_mock_simulator.py`).
+- Config validation + env overrides (`test_config.py`) and per-type
+  factory dispatch (`test_factories.py`).
+- The `openai_compatible` and `n8n` LLM backend adapters, including the
+  n8n iteration-12/13 error envelope (`test_llm_backends.py`).
+- The FastAPI control plane: `/api/config` (`test_api_config.py`),
+  control/mic-gate (`test_api_control.py`), document
+  list/delete/upload (`test_api_documents.py`), the WebSocket event
+  stream (`test_api_events.py`), and the HITL review proxy
+  (`test_api_review.py`).
+
+No tests make network calls or load GPU models.
+
+`scripts/smoke.py` exercises the end-to-end LLM→JSON action→simulator path
+(no audio, no real sim) and **requires a reachable LLM**.
 
 ## Integrating the real simulator
 
@@ -238,45 +307,56 @@ OS; only real-simulator integration is Windows-pinned.
 voice_agent/        package: config, pipeline, metrics, logging, backends, actions
   backends/{stt,tts,vad,turn,llm,simulator}/   swappable backends + factories
   actions/          JSON action schema, parser, dispatch, processor, prompt
-  api/              optional FastAPI + WebSocket control plane for the frontend
+  api/              FastAPI + WebSocket control plane for the frontend
 scripts/            smoke, report, bench_stt, bench_tts
 tests/              unit tests (no network, no GPU)
-frontend/           SvelteKit dashboard (subscribes to /ws/events; see frontend/README.md)
+frontend/           SvelteKit dashboard (see frontend/README.md)
+docs/               n8n HTTP contracts (API.md runtime, REVIEW_API.md HITL)
 config.yaml         default config
 config.examples/    backend-variant configs
 ```
 
 ## Frontend
 
-A live dashboard that subscribes to the voice agent over WebSocket lives in
-[`frontend/`](frontend/) (SvelteKit + TypeScript). Two pages:
+A live dashboard that subscribes to the voice agent over WebSocket lives
+in [`frontend/`](frontend/) (SvelteKit + TypeScript). Four pages:
 
-- **Monitor** (`/`) — live transcript, ship state, and per-turn latency.
-- **Documents** (`/documents`) — upload a file to the n8n ingestion workflow
-  (with human-in-the-loop review), or delete every chunk of a document from
-  qdrant. Both routes are proxied through `/api/documents/*` on the Python
-  backend so the qdrant API key never reaches the browser.
+- **Monitor** (`/`) — live transcript, ship state, per-turn latency,
+  plus a text-command chatbox and a mic on/off toggle.
+- **Documents** (`/documents`) — upload a PDF to the n8n HITL ingestion
+  pipeline, list and delete document chunks in qdrant, and drill into a
+  pending review batch at `/documents/<batch_id>` to approve / edit /
+  reject individual chunks. All n8n and qdrant traffic is proxied through
+  `/api/documents/*` and `/api/review/*` so API keys never reach the
+  browser.
+- **Audit** (`/audit`) — recent entries from the n8n audit log,
+  rendered per `actie` (ingestion success, all-rejected failure,
+  LLM-error rows, etc.).
+- **Config** (`/config`) — view, edit, and reload `config.yaml`
+  in-place.
 
-Enable the control plane and (optionally) the qdrant management routes in
-`config.yaml`:
+Enable the control plane and the integration routes in `config.yaml`:
 
 ```yaml
 api:
   enabled: true
 documents:
-  n8n_upload_webhook: "http://localhost:5678/webhook/ingest-document"
-  qdrant_url: "http://127.0.0.1:6333"
-  qdrant_collection: "documents"
+  qdrant_url: http://127.0.0.1:6333
+  qdrant_collection: maritime_hybrid
+  qdrant_api_key_env: QDRANT_API_KEY
+review:
+  n8n_base_url: http://127.0.0.1:5678
+  # upload_path / pending_path / audit_log_path default to /webhook/...
 ```
 
-Each `documents.*` field is optional — endpoints return HTTP 503 with a
-"configure documents.<field>" message until you set them, so the frontend
-boots before all integrations are wired. Then
+Each `documents.*` and `review.*` field is optional — endpoints return
+HTTP 503 with a "configure `<field>`" message until you set them, so the
+frontend boots before all integrations are wired. Then
 `cd frontend && npm install && npm run dev`. See
 [`frontend/README.md`](frontend/README.md) for details.
 
 ## Non-goals (v1)
 
-English-only; no multi-user/WebRTC; no persona/voice cloning; no cross-run
-memory; this client does not host the LLM, implement the UDP protocol, or model
-ship dynamics in the mock.
+English-only; no multi-user/WebRTC; no persona/voice cloning; no
+cross-run memory; this client does not host the LLM, implement the UDP
+protocol, or model ship dynamics in the mock.
