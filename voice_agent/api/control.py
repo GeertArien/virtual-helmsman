@@ -22,8 +22,12 @@ from dataclasses import dataclass
 class ControlState:
     """Mutable knobs the API can flip at runtime.
 
-    ``mic_enabled`` starts True so the pipeline keeps its historical
-    "always listening" behaviour. Toggle it via ``POST /api/control/mic``.
+    ``mic_enabled`` starts False so a fresh session is not listening until the
+    cursist explicitly enables the mic. This dovetails with the AI Act Art. 50
+    transparency gate in the frontend: the user must acknowledge they are
+    talking to an AI system (modal) before any input is possible, and the chat
+    box -- which is enabled only while the mic is off -- is the available input
+    immediately after acknowledgement. Toggle the mic via ``POST /api/control/mic``.
     """
 
-    mic_enabled: bool = True
+    mic_enabled: bool = False

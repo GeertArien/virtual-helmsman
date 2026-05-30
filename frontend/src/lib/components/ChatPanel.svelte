@@ -123,6 +123,7 @@
       rows="2"
       disabled={chatLocked}
       aria-label="Text command"
+      data-primary-input
     ></textarea>
     <button type="submit" class="send" disabled={!canSend}>
       {sending ? 'Sending…' : 'Send'}

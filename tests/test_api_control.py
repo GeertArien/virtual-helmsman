@@ -72,9 +72,10 @@ def _build_app(
 # ---------- ControlState / state endpoint ----------------------------------
 
 
-def test_control_state_defaults_to_mic_on():
-    """A fresh ControlState starts with the mic on -- historical behaviour."""
-    assert ControlState().mic_enabled is True
+def test_control_state_defaults_to_mic_off():
+    """A fresh ControlState starts with the mic off -- the cursist must enable
+    it explicitly, after acknowledging the AI transparency gate."""
+    assert ControlState().mic_enabled is False
 
 
 def test_get_state_returns_current_mic_flag():
@@ -88,7 +89,7 @@ def test_get_state_returns_current_mic_flag():
 
 
 def test_mic_toggle_flips_state():
-    client, state, _, _ = _build_app()
+    client, state, _, _ = _build_app(state=ControlState(mic_enabled=True))
     assert state.mic_enabled is True
     res = client.post("/api/control/mic", json={"enabled": False})
     assert res.status_code == 200
@@ -99,7 +100,7 @@ def test_mic_toggle_flips_state():
 def test_mic_toggle_publishes_input_mode_changed_event():
     bus = EventBus()
     queue = bus.subscribe()
-    client, _, _, _ = _build_app(bus=bus)
+    client, _, _, _ = _build_app(state=ControlState(mic_enabled=True), bus=bus)
     client.post("/api/control/mic", json={"enabled": False})
     # Drain exactly one event -- the queue is async but the publish was
     # sync so it's already enqueued.
@@ -128,7 +129,7 @@ def test_mic_toggle_rejects_unknown_fields():
 
 
 def test_text_send_returns_409_when_mic_enabled():
-    client, _, _, stub = _build_app()
+    client, _, _, stub = _build_app(state=ControlState(mic_enabled=True))
     res = client.post("/api/control/text", json={"text": "come to two seven zero"})
     assert res.status_code == 409
     assert "disable" in res.json()["detail"].lower()
