@@ -1,5 +1,6 @@
 # Example: Whisper STT backend instead of Parakeet.
-# Differs from the default only in the stt block.
+# Differs from the default only in the stt block. (quantization is omitted --
+# it applies to the parakeet_onnx backend only.)
 
 stt:
   backend: whisper
@@ -15,14 +16,18 @@ tts:
 vad:
   backend: silero
   threshold: 0.5
+  stop_secs: 0.8
 
 turn_detection:
   backend: smart_turn_v3
   device: cpu
 
 llm:
-  base_url: http://llm-server:8000/v1
-  model: qwen3-30b-a3b-instruct
+  backend: n8n
+  base_url: http://localhost:5678
+  webhook_path: /webhook/helmsman
+  model: unsloth/gemma-4-e4b-it
+  rerank: true
   api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
