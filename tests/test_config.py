@@ -66,6 +66,35 @@ def test_resolved_api_key_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.llm.resolved_api_key() == "secret-token"
 
 
+def test_n8n_auth_header_defaults() -> None:
+    config = parse_config(_minimal())
+    assert config.llm.n8n_auth_header == "X-N8N-API-KEY"
+    assert config.llm.n8n_api_key_env == "N8N_API_KEY"
+
+
+def test_resolved_n8n_headers_empty_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("N8N_API_KEY", raising=False)
+    config = parse_config(_minimal())
+    assert config.llm.resolved_n8n_headers() == {}
+
+
+def test_resolved_n8n_headers_uses_configured_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("N8N_KEY_ALT", "n8n-secret")
+    config = parse_config(
+        {
+            **_minimal(),
+            "llm": {
+                **_minimal()["llm"],
+                "n8n_auth_header": "X-Custom-Auth",
+                "n8n_api_key_env": "N8N_KEY_ALT",
+            },
+        }
+    )
+    assert config.llm.resolved_n8n_headers() == {"X-Custom-Auth": "n8n-secret"}
+
+
 def test_invalid_stt_backend_rejected() -> None:
     data = _minimal()
     data["stt"]["backend"] = "nonexistent_engine"

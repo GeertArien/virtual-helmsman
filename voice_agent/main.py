@@ -16,6 +16,7 @@ import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
+from dotenv import load_dotenv
 from pipecat.pipeline.runner import PipelineRunner
 
 from voice_agent.api.app import SessionInfo, create_app
@@ -67,6 +68,11 @@ async def _maybe_start_api(
 
 async def _run(config_path: str) -> None:
     """Load config, build the pipeline (and optional API), and run until interrupted."""
+    # Load secrets from a local .env (if present) into the process environment
+    # before anything reads os.environ -- API keys are referenced by env-var
+    # name (config *_api_key_env / n8n_api_key_env). Real env vars already set
+    # take precedence; override=False is python-dotenv's default.
+    load_dotenv()
     config = load_config(config_path)
     session_id = new_session_id()
     configure_logging(config.logging, session_id)

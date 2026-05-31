@@ -87,7 +87,7 @@ async def _fetch_pending(
     log = get_logger("api.review")
     url = cfg.n8n_base_url.rstrip("/") + cfg.pending_path
     try:
-        res = await client.get(url)
+        res = await client.get(url, headers=cfg.resolved_n8n_headers() or None)
     except httpx.RequestError as exc:
         raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
 
@@ -198,7 +198,9 @@ def create_review_router(
 
         url = cfg.n8n_base_url.rstrip("/") + cfg.upload_path
         try:
-            res = await client.post(url, files=files, data=data)
+            res = await client.post(
+                url, files=files, data=data, headers=cfg.resolved_n8n_headers() or None
+            )
         except httpx.RequestError as exc:
             raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
 
@@ -293,7 +295,9 @@ def create_review_router(
             ) from exc
 
         try:
-            res = await client.post(resume_url, json=decisions_body)
+            res = await client.post(
+                resume_url, json=decisions_body, headers=cfg.resolved_n8n_headers() or None
+            )
         except httpx.RequestError as exc:
             raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
 
@@ -355,7 +359,9 @@ def create_review_router(
 
         url = cfg.n8n_base_url.rstrip("/") + cfg.audit_log_path
         try:
-            res = await client.get(url, params=params or None)
+            res = await client.get(
+                url, params=params or None, headers=cfg.resolved_n8n_headers() or None
+            )
         except httpx.RequestError as exc:
             raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
 
@@ -397,7 +403,9 @@ def create_review_router(
 
         url = cfg.n8n_base_url.rstrip("/") + cfg.audit_event_path
         try:
-            res = await client.post(url, json=event.model_dump())
+            res = await client.post(
+                url, json=event.model_dump(), headers=cfg.resolved_n8n_headers() or None
+            )
         except httpx.RequestError as exc:
             raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
 

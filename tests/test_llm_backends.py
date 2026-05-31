@@ -91,6 +91,7 @@ def test_factory_dispatches_to_n8n() -> None:
         webhook_path="/webhook/helmsman",
         rerank=True,
         timeout_seconds=60.0,
+        resolved_n8n_headers=lambda: {},
     )
     result = create_llm(cfg)
     assert isinstance(result, N8nLLMService)

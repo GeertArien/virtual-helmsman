@@ -165,8 +165,28 @@ Ready-made variants are in [`config.examples/`](config.examples/):
 `config.piper.yaml`.
 
 **Environment overrides** (applied over the file): `LLM_BASE_URL`,
-`SIMULATOR_BACKEND`. The LLM API key is always read from the env var named by
-`llm.api_key_env` (default `LLM_API_KEY`).
+`SIMULATOR_BACKEND`.
+
+### Secrets / API keys
+
+Keys never live in `config.yaml` — the YAML only references the **name** of an
+environment variable, and the app reads the secret from the environment at
+runtime. On startup the agent loads a local **`.env`** (gitignored) via
+`python-dotenv`; real environment variables already set take precedence.
+
+```bash
+cp .env.example .env   # then fill in the keys you need
+```
+
+| Env var | Used by | Config field | How it's sent |
+|---------|---------|--------------|----------------|
+| `LLM_API_KEY` | `openai_compatible` LLM backend (direct LM Studio `/v1`) | `llm.api_key_env` | OpenAI auth. *Unused with the default `n8n` backend — LM Studio creds live in n8n.* |
+| `QDRANT_API_KEY` | Documents page → qdrant proxy | `documents.qdrant_api_key_env` | `api-key` header |
+| `N8N_API_KEY` | every n8n webhook call (helmsman LLM + review/audit) | `llm.n8n_api_key_env` / `review.n8n_api_key_env` | custom Header-Auth header, name from `*.n8n_auth_header` (default `X-N8N-API-KEY`) |
+
+Leave a key blank to send no credential (fine for unauthenticated local
+services). For n8n, set `llm.n8n_auth_header` / `review.n8n_auth_header` to
+match the header name on your n8n "Header Auth" credential.
 
 ## Running the agent
 
@@ -201,6 +221,8 @@ llm:
   api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
+  n8n_auth_header: X-N8N-API-KEY   # value from $N8N_API_KEY; omit header if unset
+  n8n_api_key_env: N8N_API_KEY
 ```
 
 `model` is forwarded as the `model` field in the request body — n8n

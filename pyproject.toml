@@ -28,6 +28,9 @@ dependencies = [
     "pydantic==2.11.0",
     "pyyaml==6.0.2",
     "structlog==25.4.0",
+    # Loads secrets from a local .env into the process environment at startup
+    # (API keys are referenced by env-var name; see config.py / .env.example).
+    "python-dotenv==1.0.1",
     # Parakeet-ONNX STT (default STT backend): in-process ASR via ONNX Runtime.
     "onnx-asr>=0.6.0,<1.0",
     "onnxruntime-gpu==1.26.0",

@@ -140,15 +140,25 @@ class N8nLLMService(FrameProcessor):
         webhook_path: str = "/webhook/helmsman",
         rerank: bool = True,
         timeout_seconds: float = 30.0,
+        auth_headers: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._url = base_url.rstrip("/") + webhook_path
         self._model = model
         self._rerank = rerank
+        # Custom Header-Auth for n8n, if configured. Empty dict = no header,
+        # so an unauthenticated local n8n keeps working.
+        self._auth_headers = auth_headers or {}
         self._client = httpx.AsyncClient(timeout=timeout_seconds)
         self._log = get_logger("llm.n8n")
-        self._log.info("n8n_llm_init", url=self._url, model=model, rerank=rerank)
+        self._log.info(
+            "n8n_llm_init",
+            url=self._url,
+            model=model,
+            rerank=rerank,
+            auth_set=bool(self._auth_headers),
+        )
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
         await super().process_frame(frame, direction)
@@ -187,6 +197,7 @@ class N8nLLMService(FrameProcessor):
                     "rerank": self._rerank,
                     "model": self._model,
                 },
+                headers=self._auth_headers or None,
             )
         except httpx.RequestError as exc:
             self._log.error("n8n_unreachable", error=str(exc), url=self._url)
@@ -237,4 +248,5 @@ def build_llm(config: Any) -> N8nLLMService:
         webhook_path=config.webhook_path,
         rerank=config.rerank,
         timeout_seconds=config.timeout_seconds,
+        auth_headers=config.resolved_n8n_headers(),
     )

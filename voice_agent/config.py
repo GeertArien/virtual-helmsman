@@ -122,10 +122,21 @@ class LlmConfig(_Base):
     # Toggles n8n's RAG-branch reranker. False is the faster path; see
     # API.md "A/B rerank toggle".
     rerank: bool = True
+    # n8n webhook auth (custom "Header Auth"): the header NAME to send, with the
+    # value read from the env var named by ``n8n_api_key_env``. No header is
+    # sent when that env var is unset, so an unauthenticated local n8n still
+    # works. Set the name to match the n8n Header Auth credential.
+    n8n_auth_header: str = "X-N8N-API-KEY"
+    n8n_api_key_env: str = "N8N_API_KEY"
 
     def resolved_api_key(self) -> str | None:
         """Return the API key from the env var named by ``api_key_env``."""
         return os.environ.get(self.api_key_env)
+
+    def resolved_n8n_headers(self) -> dict[str, str]:
+        """Auth header for outbound n8n webhook calls, or ``{}`` if no key set."""
+        key = os.environ.get(self.n8n_api_key_env)
+        return {self.n8n_auth_header: key} if key else {}
 
 
 class SimulatorRealConfig(_Base):
@@ -238,6 +249,17 @@ class ReviewConfig(_Base):
     ] = "paragraph_aware"
     # Request timeout (seconds) for outbound calls to n8n.
     request_timeout_seconds: float = 60.0
+    # n8n webhook auth (custom "Header Auth"): header NAME to send, value read
+    # from the env var named by ``n8n_api_key_env``. No header is sent when the
+    # env var is unset. Keep in sync with the n8n Header Auth credential (and
+    # with ``llm.n8n_auth_header`` -- same n8n instance, same scheme).
+    n8n_auth_header: str = "X-N8N-API-KEY"
+    n8n_api_key_env: str = "N8N_API_KEY"
+
+    def resolved_n8n_headers(self) -> dict[str, str]:
+        """Auth header for outbound n8n webhook calls, or ``{}`` if no key set."""
+        key = os.environ.get(self.n8n_api_key_env)
+        return {self.n8n_auth_header: key} if key else {}
 
 
 class AppConfig(_Base):

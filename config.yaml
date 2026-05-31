@@ -24,6 +24,8 @@ llm:
   max_retries: 1
   webhook_path: /webhook/helmsman
   rerank: true
+  n8n_auth_header: X-N8N-API-KEY   # n8n Header-Auth header name; value = $N8N_API_KEY
+  n8n_api_key_env: N8N_API_KEY
 simulator:
   backend: mock
   real:
@@ -70,3 +72,5 @@ review:
   default_categories: algemeen
   default_chunking_strategy: paragraph_aware
   request_timeout_seconds: 60
+  n8n_auth_header: X-N8N-API-KEY   # keep in sync with llm.n8n_auth_header
+  n8n_api_key_env: N8N_API_KEY

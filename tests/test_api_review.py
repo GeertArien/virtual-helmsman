@@ -671,3 +671,39 @@ def test_audit_event_502s_when_n8n_unreachable(
         res = c.post("/api/review/audit-event", json=_ART50_EVENT)
     assert res.status_code == 502
     assert "n8n unreachable" in res.json()["detail"]
+
+
+# ---------- n8n Header-Auth forwarding ------------------------------------
+
+
+def test_n8n_auth_header_forwarded_when_key_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("N8N_API_KEY", "n8n-secret")
+    stub = _StubClient()
+    stub.queue(_FakeResponse(200, {"status": "logged", "id": 1}))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.post("/api/review/audit-event", json=_ART50_EVENT)
+    assert res.status_code == 200
+    assert stub.calls[0]["kwargs"]["headers"] == {"X-N8N-API-KEY": "n8n-secret"}
+
+
+def test_n8n_auth_header_omitted_when_key_unset(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("N8N_API_KEY", raising=False)
+    stub = _StubClient()
+    stub.queue(_FakeResponse(200, {"status": "logged", "id": 1}))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.post("/api/review/audit-event", json=_ART50_EVENT)
+    assert res.status_code == 200
+    # No header dict forwarded (resolved_n8n_headers() -> {} -> None).
+    assert stub.calls[0]["kwargs"]["headers"] is None
