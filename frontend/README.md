@@ -5,16 +5,24 @@ backend's WebSocket for live conversation, ship state, and per-turn
 latency, and drives the n8n HITL ingestion + qdrant document-management
 routes through the Python backend's proxy.
 
+On every page load an **AI Act Art. 50 transparency gate** (`TransparencyModal`,
+mounted at the app root) blocks the UI until the user acknowledges they are
+interacting with an AI system. It has no persistence — re-prompts each session
+— and on acknowledge best-effort logs an `art50_acknowledged` row to the n8n
+audit trail (`POST /api/review/audit-event`), without ever blocking the user.
+
 Four pages:
 
 - **`/`** — *Monitor.* Live transcript, ship state, per-turn latency,
-  plus a text-command chatbox and a mic on/off toggle.
+  plus a text-command chatbox and a mic on/off toggle. The mic starts
+  **paused**, so the chatbox is the default input until it's enabled.
 - **`/documents`** — upload PDFs to the n8n ingestion pipeline, list
   documents in qdrant, and review pending chunk batches.
   - **`/documents/<batch_id>`** — per-batch chunk review: approve, edit,
     or reject each chunk, then submit decisions back to n8n.
 - **`/audit`** — the n8n audit log, rendered per-`actie` (ingestion
-  success, all-rejected failure, LLM-error rows, etc.).
+  success, all-rejected failure, LLM-error rows, transparency
+  acknowledgements, etc.), with an `actie` filter.
 - **`/config`** — view, edit, and reload `config.yaml` in-place.
 
 ## Requirements
@@ -76,7 +84,7 @@ Runs `svelte-kit sync` then `svelte-check`.
 ```
 src/
   routes/
-    +layout.svelte         # opens the WS stream once, renders <Header>
+    +layout.svelte         # opens the WS stream once; renders the Art. 50 gate + <Header>
     +layout.ts             # SSR off (SPA-only)
     +page.svelte           # Monitor page — conversation, ship state, metrics, chat, mic
     documents/
@@ -91,6 +99,7 @@ src/
     api.ts                 # typed event union + reconnecting WebSocket + REST clients
     liveState.svelte.ts    # global `$state` proxy, owned by +layout.svelte
     components/
+      TransparencyModal.svelte  # AI Act Art. 50 acknowledgement gate (app-root)
       Header.svelte             # session id, WS connection indicator, tab nav
       ConversationPanel.svelte  # transcript / assistant replies
       ChatPanel.svelte          # text-command box on the monitor page

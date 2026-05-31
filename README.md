@@ -345,10 +345,20 @@ config.examples/    backend-variant configs
 ## Frontend
 
 A live dashboard that subscribes to the voice agent over WebSocket lives
-in [`frontend/`](frontend/) (SvelteKit + TypeScript). Four pages:
+in [`frontend/`](frontend/) (SvelteKit + TypeScript).
+
+On every page load an **AI Act Art. 50 transparency gate** blocks the UI
+until the user acknowledges they are interacting with an AI system (Dutch
+modal; no persistence — it re-prompts each session). On acknowledge it
+best-effort logs an `art50_acknowledged` row to the n8n audit trail (via
+`POST /api/review/audit-event`), never blocking the user if n8n is down.
+Full declaration text: [`frontend/static/documentation/transparantieverklaring.md`](frontend/static/documentation/transparantieverklaring.md).
+
+Four pages:
 
 - **Monitor** (`/`) — live transcript, ship state, per-turn latency,
-  plus a text-command chatbox and a mic on/off toggle.
+  plus a text-command chatbox and a mic on/off toggle. The **mic starts
+  paused**, so the chatbox is the default input until the user enables it.
 - **Documents** (`/documents`) — upload a PDF to the n8n HITL ingestion
   pipeline, list and delete document chunks in qdrant, and drill into a
   pending review batch at `/documents/<batch_id>` to approve / edit /
@@ -357,7 +367,8 @@ in [`frontend/`](frontend/) (SvelteKit + TypeScript). Four pages:
   browser.
 - **Audit** (`/audit`) — recent entries from the n8n audit log,
   rendered per `actie` (ingestion success, all-rejected failure,
-  LLM-error rows, etc.).
+  LLM-error rows, transparency acknowledgements, etc.), with an `actie`
+  filter.
 - **Config** (`/config`) — view, edit, and reload `config.yaml`
   in-place.
 
@@ -372,7 +383,7 @@ documents:
   qdrant_api_key_env: QDRANT_API_KEY
 review:
   n8n_base_url: http://127.0.0.1:5678
-  # upload_path / pending_path / audit_log_path default to /webhook/...
+  # upload_path / pending_path / audit_log_path / audit_event_path default to /webhook/...
 ```
 
 Each `documents.*` and `review.*` field is optional — endpoints return
