@@ -64,6 +64,7 @@ review:
   upload_path: /webhook/review/upload
   pending_path: /webhook/review/pending
   audit_log_path: /webhook/audit-log
+  audit_event_path: /webhook/audit-event
   default_document_type: PDF
   default_collection_name: maritime_hybrid
   default_categories: algemeen

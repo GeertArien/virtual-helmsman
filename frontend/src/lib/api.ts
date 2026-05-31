@@ -322,6 +322,30 @@ export async function fetchAuditLog(
   return (await res.json()) as AuditLogResponse;
 }
 
+/** One UI-side audit row to write via POST /api/review/audit-event. All three
+ *  fields are required, non-empty, ≤500 chars (enforced backend + n8n side). */
+export interface AuditEventInput {
+  document_naam: string;
+  actie: string;
+  resultaat: string;
+}
+
+/** POST /api/review/audit-event -- write a single audit row for a UI event the
+ *  n8n workflow can't observe itself (e.g. the AI Act Art. 50 transparency
+ *  acknowledgement). The backend proxies it to `<n8n>/webhook/audit-event`.
+ *
+ *  Callers should treat this as **best-effort** and not block on it: the
+ *  acknowledgement gate must succeed even when n8n is down. Await/catch only
+ *  if you genuinely want to observe the failure. */
+export async function logAuditEvent(event: AuditEventInput): Promise<void> {
+  const res = await fetch(`${backendUrl()}/api/review/audit-event`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(event)
+  });
+  if (!res.ok) throw await readError(res);
+}
+
 // --- Control plane (mic toggle + text-command injection) -------------------
 
 /** Snapshot of the agent's input mode -- the chatbox is locked while the mic

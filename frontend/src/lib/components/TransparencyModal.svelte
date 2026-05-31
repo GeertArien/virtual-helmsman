@@ -12,6 +12,12 @@
    * per day. No storage, no network -- acknowledgement logging is out of scope.
    */
 
+  /** Fired once, after the user acknowledges. The modal itself stays free of
+   *  any network/side-effect code (per the Art. 50 spec: "no network requests
+   *  from the modal itself"); the parent decides what acknowledgement triggers
+   *  (e.g. best-effort audit logging). */
+  let { onAcknowledge = () => {} }: { onAcknowledge?: () => void } = $props();
+
   // `open` drives rendering; it starts true on every mount (= every page load).
   // Setting it false on acknowledge lets the {#if} run its fade-out transition.
   let open = $state(true);
@@ -106,6 +112,10 @@
         'main button:not([disabled]), main input:not([disabled]), main textarea:not([disabled])'
       );
     target?.focus();
+
+    // Notify the parent last, so focus has already moved and the gate is gone
+    // regardless of what the callback does.
+    onAcknowledge();
   }
 </script>
 

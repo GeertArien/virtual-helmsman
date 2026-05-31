@@ -24,7 +24,8 @@
     { value: 'question_runtime', label: 'Question (runtime)' },
     { value: 'ingestie_hitl', label: 'HITL ingestion' },
     { value: 'llm_error_runtime', label: 'Runtime LLM error' },
-    { value: 'llm_error_ingestion', label: 'Ingestion error' }
+    { value: 'llm_error_ingestion', label: 'Ingestion error' },
+    { value: 'art50_acknowledged', label: 'AI transparency (Art. 50)' }
   ];
 
   let load = $state<LoadState>({ kind: 'loading' });

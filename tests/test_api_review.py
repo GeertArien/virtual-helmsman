@@ -86,6 +86,8 @@ def test_review_config_defaults_disable_endpoints():
     assert cfg.n8n_base_url is None
     assert cfg.upload_path == "/webhook/review/upload"
     assert cfg.pending_path == "/webhook/review/pending"
+    assert cfg.audit_log_path == "/webhook/audit-log"
+    assert cfg.audit_event_path == "/webhook/audit-event"
     assert cfg.default_collection_name == "maritime_hybrid"
     assert cfg.default_chunking_strategy == "paragraph_aware"
 
@@ -563,5 +565,109 @@ def test_audit_log_502s_when_n8n_unreachable(monkeypatch: pytest.MonkeyPatch) ->
     app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
     with TestClient(app) as c:
         res = c.get("/api/review/audit-log")
+    assert res.status_code == 502
+    assert "n8n unreachable" in res.json()["detail"]
+
+
+# ---------- Audit event (write) -------------------------------------------
+
+_ART50_EVENT = {
+    "document_naam": "transparantieverklaring_v1.0",
+    "actie": "art50_acknowledged",
+    "resultaat": "OK",
+}
+
+
+def test_audit_event_returns_503_when_n8n_unconfigured():
+    app = create_app(event_bus=EventBus(), session=_session(), review=ReviewConfig())
+    with TestClient(app) as c:
+        res = c.post("/api/review/audit-event", json=_ART50_EVENT)
+    assert res.status_code == 503
+    assert "n8n_base_url" in res.json()["detail"]
+
+
+def test_audit_event_forwards_body_and_passes_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = _StubClient()
+    stub.queue(
+        _FakeResponse(
+            200,
+            {
+                "status": "logged",
+                "id": 142,
+                "createdAt": "2026-05-31T14:22:09.117Z",
+                "document_naam": "transparantieverklaring_v1.0",
+                "actie": "art50_acknowledged",
+            },
+        )
+    )
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.post("/api/review/audit-event", json=_ART50_EVENT)
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "logged"
+    assert body["id"] == 142
+    # Forwarded to the right webhook with the body verbatim.
+    assert stub.calls[0]["url"] == "http://n8n:5678/webhook/audit-event"
+    assert stub.calls[0]["kwargs"]["json"] == _ART50_EVENT
+
+
+def test_audit_event_rejects_missing_fields():
+    """All three fields are required -- FastAPI/pydantic 422s before n8n is hit."""
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/review/audit-event",
+            json={"actie": "art50_acknowledged", "resultaat": "OK"},
+        )
+    assert res.status_code == 422
+
+
+def test_audit_event_rejects_empty_string_fields():
+    """Empty strings would make n8n 500; the proxy rejects them up front."""
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.post(
+            "/api/review/audit-event",
+            json={"document_naam": "x", "actie": "", "resultaat": "OK"},
+        )
+    assert res.status_code == 422
+
+
+def test_audit_event_502s_when_n8n_returns_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stub = _StubClient()
+    stub.queue(_FakeResponse(500, {"message": "missing actie"}))
+    monkeypatch.setattr("voice_agent.api.review.httpx.AsyncClient", lambda **_: stub)
+
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.post("/api/review/audit-event", json=_ART50_EVENT)
+    assert res.status_code == 502
+
+
+def test_audit_event_502s_when_n8n_unreachable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Boom(_StubClient):
+        async def post(self, url: str, **kwargs: Any) -> _FakeResponse:
+            raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(
+        "voice_agent.api.review.httpx.AsyncClient", lambda **_: _Boom()
+    )
+    cfg = ReviewConfig(n8n_base_url="http://n8n:5678")
+    app = create_app(event_bus=EventBus(), session=_session(), review=cfg)
+    with TestClient(app) as c:
+        res = c.post("/api/review/audit-event", json=_ART50_EVENT)
     assert res.status_code == 502
     assert "n8n unreachable" in res.json()["detail"]

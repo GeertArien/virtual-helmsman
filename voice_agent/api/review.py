@@ -15,6 +15,9 @@ Four routes mounted at ``/api/review``:
   ``<n8n>/webhook/audit-log`` with the ``limit`` / ``actie`` / ``since`` query
   params forwarded verbatim. Surfaces ingestion outcomes for the UI's
   recent-activity feed.
+* ``POST /api/review/audit-event``            -- write one UI-side audit row
+  to ``<n8n>/webhook/audit-event`` (e.g. the AI Act Art. 50 transparency
+  acknowledgement). Best-effort: the frontend fires it and ignores the result.
 
 Each endpoint returns HTTP 503 with a "configure review.<field>" message
 until ``ReviewConfig.n8n_base_url`` is set.
@@ -26,9 +29,24 @@ from typing import Any
 
 import httpx
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from pydantic import BaseModel, Field
 
 from voice_agent.config import ReviewConfig
 from voice_agent.logging_setup import get_logger
+
+
+class AuditEventRequest(BaseModel):
+    """One UI-side audit row. Mirrors the ``POST /webhook/audit-event`` contract
+    in ``REVIEW_API.md``: three required strings, each bounded to 500 chars.
+
+    The semantics of each field are chosen by the caller; for the Art. 50
+    transparency gate the frontend sends ``actie="art50_acknowledged"``,
+    ``document_naam="transparantieverklaring_v<version>"``, ``resultaat="OK"``.
+    """
+
+    document_naam: str = Field(min_length=1, max_length=500)
+    actie: str = Field(min_length=1, max_length=500)
+    resultaat: str = Field(min_length=1, max_length=500)
 
 
 def _missing(field: str) -> HTTPException:
@@ -363,5 +381,48 @@ def create_review_router(
                 detail="n8n returned a non-object body for audit-log.",
             )
         return body
+
+    # ---- AUDIT EVENT (write) -------------------------------------------
+    @router.post("/audit-event")
+    async def audit_event(event: AuditEventRequest) -> dict[str, Any]:
+        """Forward one audit row to ``<n8n>/webhook/audit-event``.
+
+        The write counterpart to ``/audit-log``. The frontend treats this as
+        fire-and-forget (acknowledgement must succeed even when n8n is down),
+        so the only meaningful effect is the row insert; we still surface
+        upstream failures as 502 for callers that do want to observe them.
+        """
+        if not cfg.n8n_base_url:
+            raise _missing("n8n_base_url")
+
+        url = cfg.n8n_base_url.rstrip("/") + cfg.audit_event_path
+        try:
+            res = await client.post(url, json=event.model_dump())
+        except httpx.RequestError as exc:
+            raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
+
+        if res.status_code >= 400:
+            try:
+                detail = res.json()
+            except ValueError:
+                detail = res.text
+            raise HTTPException(
+                status_code=502,
+                detail={"upstream_status": res.status_code, "n8n": detail},
+            )
+
+        log.info(
+            "audit_event_forwarded",
+            actie=event.actie,
+            document_naam=event.document_naam,
+            n8n_status=res.status_code,
+        )
+        # n8n echoes {status, id, createdAt, ...}; pass it through. Fall back
+        # to a minimal ack if the workflow ever returns a non-object body.
+        try:
+            body = res.json()
+        except ValueError:
+            body = None
+        return body if isinstance(body, dict) else {"status": "logged"}
 
     return router

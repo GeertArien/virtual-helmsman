@@ -224,6 +224,9 @@ class ReviewConfig(_Base):
     upload_path: str = "/webhook/review/upload"
     pending_path: str = "/webhook/review/pending"
     audit_log_path: str = "/webhook/audit-log"
+    # Write side of the audit log: a single UI-side event row (e.g. the AI Act
+    # Art. 50 transparency acknowledgement). Proxied by POST /api/review/audit-event.
+    audit_event_path: str = "/webhook/audit-event"
     # Pre-fill values shown in the upload form. The webhook treats the
     # corresponding fields as required (Document_Type, Collection_Name) or
     # optional with its own defaults (Categories, Chunking_Strategy).
