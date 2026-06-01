@@ -28,6 +28,7 @@ llm:
   webhook_path: /webhook/helmsman
   model: unsloth/gemma-4-e4b-it
   rerank: true
+  expansion: true
   api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1

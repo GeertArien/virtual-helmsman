@@ -76,6 +76,7 @@ def test_factory_dispatches_to_openai_compatible(monkeypatch: pytest.MonkeyPatch
         max_retries=1,
         webhook_path="/webhook/helmsman",
         rerank=True,
+        expansion=True,
         resolved_api_key=lambda: None,
     )
     result = create_llm(cfg)
@@ -90,6 +91,7 @@ def test_factory_dispatches_to_n8n() -> None:
         model="unsloth/gemma-4-e4b-it",
         webhook_path="/webhook/helmsman",
         rerank=True,
+        expansion=True,
         timeout_seconds=60.0,
         resolved_n8n_headers=lambda: {},
     )
@@ -320,11 +322,12 @@ async def test_n8n_command_emits_start_text_end_triple() -> None:
     parsed = parse_response(pushed[1].text)
     assert isinstance(parsed.action, RudderAction)
     assert parsed.response == "Starboard twenty, aye."
-    # n8n got the right shape -- chatInput + rerank + model per API.md.
+    # n8n got the right shape -- chatInput + rerank + expansion + model per API.md.
     assert stub.calls[0]["url"] == "http://n8n:5678/webhook/helmsman"
     assert stub.calls[0]["kwargs"]["json"] == {
         "chatInput": "come to starboard twenty",
         "rerank": True,
+        "expansion": True,
         "model": "unsloth/gemma-4-e4b-it",
     }
 
@@ -478,6 +481,7 @@ def test_llm_config_n8n_accepts_same_model_enum() -> None:
     assert cfg.model == "unsloth/gemma-4-e4b-it"
     assert cfg.webhook_path == "/webhook/helmsman"
     assert cfg.rerank is True
+    assert cfg.expansion is True
 
 
 def test_llm_config_rejects_unknown_backend() -> None:

@@ -24,6 +24,7 @@ llm:
   max_retries: 1
   webhook_path: /webhook/helmsman
   rerank: true
+  expansion: true                  # RAG adjacent-chunk expansion (Qdrant scroll); independent of rerank
   n8n_auth_header: X-N8N-API-KEY   # n8n Header-Auth header name; value = $N8N_API_KEY
   n8n_api_key_env: N8N_API_KEY
 simulator:

@@ -80,7 +80,7 @@ class LlmConfig(_Base):
       no RAG. Uses ``base_url`` + ``model`` + ``api_key_env``.
     * ``n8n`` -- POST to an n8n helmsman webhook (see ``API.md``). Handles
       both command parsing and RAG question-answering. Uses ``base_url``
-      + ``webhook_path`` + ``rerank``. ``model`` is forwarded as the
+      + ``webhook_path`` + ``rerank`` + ``expansion``. ``model`` is forwarded as the
       ``model`` field in the POST body; n8n applies it to every LLM call
       inside the workflow.
 
@@ -122,6 +122,10 @@ class LlmConfig(_Base):
     # Toggles n8n's RAG-branch reranker. False is the faster path; see
     # API.md "A/B rerank toggle".
     rerank: bool = True
+    # Toggles n8n's RAG-branch adjacent-chunk expansion (Qdrant scroll for
+    # chunk_id +/-1 -- solves the Rule-15 chunk-boundary problem). Independent
+    # of ``rerank``; any combination is valid. See API.md "A/B toggles".
+    expansion: bool = True
     # n8n webhook auth (custom "Header Auth"): the header NAME to send, with the
     # value read from the env var named by ``n8n_api_key_env``. No header is
     # sent when that env var is unset, so an unauthenticated local n8n still

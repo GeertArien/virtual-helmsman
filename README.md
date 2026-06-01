@@ -208,7 +208,7 @@ the agent (LM Studio at 1234, n8n at 5678).
 
 The agent POSTs each turn to an n8n helmsman workflow that runs intent
 classification, command parsing, RAG retrieval over qdrant (with
-optional LLM reranking), and answer composition. The workflow then
+optional LLM reranking and adjacent-chunk expansion), and answer composition. The workflow then
 proxies the underlying LLM calls to LM Studio.
 
 ```yaml
@@ -218,6 +218,7 @@ llm:
   webhook_path: /webhook/helmsman
   model: unsloth/gemma-4-e4b-it
   rerank: true
+  expansion: true
   api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
@@ -229,6 +230,9 @@ llm:
 applies it to every LLM call in the workflow (intent classify, command
 parse, LLM rerank, RAG answer). `rerank: false` skips the LLM-as-reranker
 step in the RAG branch: faster, lower-quality on long retrieval contexts.
+`expansion: false` skips the adjacent-chunk Qdrant scroll (chunk_id ±1) that
+stitches together answers split across a chunk boundary; independent of
+`rerank`, so any combination is valid.
 
 Full request/response contract: [`docs/API.md`](docs/API.md).
 

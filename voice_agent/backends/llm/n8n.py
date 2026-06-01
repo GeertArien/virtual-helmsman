@@ -139,6 +139,7 @@ class N8nLLMService(FrameProcessor):
         model: str,
         webhook_path: str = "/webhook/helmsman",
         rerank: bool = True,
+        expansion: bool = True,
         timeout_seconds: float = 30.0,
         auth_headers: dict[str, str] | None = None,
         **kwargs: Any,
@@ -147,6 +148,7 @@ class N8nLLMService(FrameProcessor):
         self._url = base_url.rstrip("/") + webhook_path
         self._model = model
         self._rerank = rerank
+        self._expansion = expansion
         # Custom Header-Auth for n8n, if configured. Empty dict = no header,
         # so an unauthenticated local n8n keeps working.
         self._auth_headers = auth_headers or {}
@@ -157,6 +159,7 @@ class N8nLLMService(FrameProcessor):
             url=self._url,
             model=model,
             rerank=rerank,
+            expansion=expansion,
             auth_set=bool(self._auth_headers),
         )
 
@@ -195,6 +198,7 @@ class N8nLLMService(FrameProcessor):
                 json={
                     "chatInput": chat_input,
                     "rerank": self._rerank,
+                    "expansion": self._expansion,
                     "model": self._model,
                 },
                 headers=self._auth_headers or None,
@@ -247,6 +251,7 @@ def build_llm(config: Any) -> N8nLLMService:
         model=config.model,
         webhook_path=config.webhook_path,
         rerank=config.rerank,
+        expansion=config.expansion,
         timeout_seconds=config.timeout_seconds,
         auth_headers=config.resolved_n8n_headers(),
     )
