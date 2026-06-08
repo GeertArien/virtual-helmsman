@@ -73,7 +73,7 @@ class TurnConfig(_Base):
 class LlmConfig(_Base):
     """LLM backend configuration.
 
-    Two backends are supported:
+    Three backends are supported:
 
     * ``openai_compatible`` -- direct chat-completion call against an
       OpenAI-shaped HTTP server (e.g. LM Studio). Command parsing only;
@@ -83,13 +83,21 @@ class LlmConfig(_Base):
       + ``webhook_path`` + ``rerank`` + ``expansion``. ``model`` is forwarded as the
       ``model`` field in the POST body; n8n applies it to every LLM call
       inside the workflow.
+    * ``langgraph`` -- in-backend reimplementation of the n8n runtime path
+      (LangGraph + LangChain + Langfuse; see ``docs/LANGGRAPH_BACKEND.md``).
+      Same command + RAG behaviour as ``n8n`` but with no external workflow
+      engine. ``base_url`` is the LM Studio ``/v1`` URL (as for
+      ``openai_compatible``); RAG additionally uses ``qdrant_*`` +
+      ``embedding_model`` + ``retrieval_top_k`` and honours ``rerank`` /
+      ``expansion``. Optional Langfuse tracing via ``langfuse_*``.
 
     Per-field applicability is annotated below. ``timeout_seconds`` applies
-    to both -- raise it for ``n8n`` since the RAG branch can take ~10-20s.
+    to all -- raise it for ``n8n`` / ``langgraph`` since the RAG branch can
+    take ~10-20s.
     """
 
-    backend: Literal["openai_compatible", "n8n"] = "openai_compatible"
-    # OpenAI-compatible: full /v1 base URL ("http://localhost:1234/v1").
+    backend: Literal["openai_compatible", "n8n", "langgraph"] = "openai_compatible"
+    # OpenAI-compatible / langgraph: full /v1 base URL ("http://localhost:1234/v1").
     # n8n: just the host, the path is appended below ("http://localhost:5678").
     base_url: str
     timeout_seconds: float = 30.0
@@ -133,6 +141,26 @@ class LlmConfig(_Base):
     n8n_auth_header: str = "X-N8N-API-KEY"
     n8n_api_key_env: str = "N8N_API_KEY"
 
+    # --- langgraph only -------------------------------------------------
+    # Qdrant for the in-backend RAG question branch. ``qdrant_url`` is the
+    # Qdrant REST root (e.g. "http://localhost:6333"); leave it unset to run
+    # command-only (a question turn then returns a graceful error envelope).
+    # The collection defaults to the same one the n8n pipeline ingests into.
+    qdrant_url: str | None = None
+    qdrant_collection: str = "maritime_hybrid"
+    qdrant_api_key_env: str = "QDRANT_API_KEY"
+    # Dense embedding model + Qdrant named vector for the query (must match the
+    # collection's dense vector; pinned to bge-m3 / 1024-dim like the pipeline).
+    embedding_model: str = "text-embedding-bge-m3"
+    # Hybrid retrieval breadth before rerank/expansion (each prefetch pulls 2x).
+    retrieval_top_k: int = 20
+    # Optional Langfuse tracing of every LLM/retrieval step. Keys are read from
+    # the env vars named below (blank/unset -> tracing silently disabled).
+    langfuse_enabled: bool = False
+    langfuse_host: str | None = None
+    langfuse_public_key_env: str = "LANGFUSE_PUBLIC_KEY"
+    langfuse_secret_key_env: str = "LANGFUSE_SECRET_KEY"
+
     def resolved_api_key(self) -> str | None:
         """Return the API key from the env var named by ``api_key_env``."""
         return os.environ.get(self.api_key_env)
@@ -141,6 +169,11 @@ class LlmConfig(_Base):
         """Auth header for outbound n8n webhook calls, or ``{}`` if no key set."""
         key = os.environ.get(self.n8n_api_key_env)
         return {self.n8n_auth_header: key} if key else {}
+
+    def resolved_qdrant_headers(self) -> dict[str, str]:
+        """``api-key`` header for Qdrant (langgraph RAG), or ``{}`` if no key set."""
+        key = os.environ.get(self.qdrant_api_key_env)
+        return {"api-key": key} if key else {}
 
 
 class SimulatorRealConfig(_Base):

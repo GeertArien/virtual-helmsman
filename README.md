@@ -157,12 +157,12 @@ Backends shipped in v1:
 | TTS       | `kokoro` (default), `piper`                                                               |
 | VAD       | `silero`                                                                                  |
 | Turn      | `smart_turn_v3` (default), `vad_only` (benchmark baseline)                                |
-| LLM       | `n8n` (default; command parsing + RAG), `openai_compatible` (command parsing only)        |
+| LLM       | `n8n` (default; command parsing + RAG), `langgraph` (in-backend command + RAG), `openai_compatible` (command parsing only) |
 | Simulator | `real`, `mock` (default)                                                                  |
 
 Ready-made variants are in [`config.examples/`](config.examples/):
 `config.real_sim.yaml`, `config.parakeet_06b.yaml`, `config.whisper.yaml`,
-`config.piper.yaml`.
+`config.piper.yaml`, `config.langgraph.yaml`.
 
 **Environment overrides** (applied over the file): `LLM_BASE_URL`,
 `SIMULATOR_BACKEND`.
@@ -235,6 +235,37 @@ stitches together answers split across a chunk boundary; independent of
 `rerank`, so any combination is valid.
 
 Full request/response contract: [`docs/API.md`](docs/API.md).
+
+### `langgraph` (in-backend, no n8n)
+
+The same command + RAG behaviour as `n8n`, but reimplemented natively in the
+backend — **LangGraph** orchestrates the turn (intent classify → command parse
+or hybrid-RAG with rerank + adjacent-chunk expansion), **LangChain**
+(`ChatOpenAI`) makes the LLM calls against LM Studio, and **Langfuse**
+optionally traces every step. No external workflow engine. Requires the
+optional extra:
+
+```bash
+pip install -e ".[langgraph]"
+```
+
+```yaml
+llm:
+  backend: langgraph
+  base_url: http://localhost:1234/v1   # LM Studio /v1 (chat + bge-m3 embeddings)
+  model: unsloth/gemma-4-e4b-it
+  rerank: true
+  expansion: true
+  qdrant_url: http://localhost:6333    # omit to run command-only
+  qdrant_collection: maritime_hybrid
+  embedding_model: text-embedding-bge-m3
+  retrieval_top_k: 20
+  langfuse_enabled: false              # true + LANGFUSE_* keys to trace
+```
+
+Qdrant and the embedding endpoint are reached over plain HTTP, so no
+`qdrant-client` is added. Full design + node-by-node parity with the n8n
+runtime workflow: [`docs/LANGGRAPH_BACKEND.md`](docs/LANGGRAPH_BACKEND.md).
 
 ### `openai_compatible`
 
