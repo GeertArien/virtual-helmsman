@@ -1,6 +1,6 @@
 """LLM factory: selects an LLM backend from config.
 
-Two backends are wired:
+Three backends are wired:
 
 * ``openai_compatible`` -- :mod:`voice_agent.backends.llm.openai_compatible`,
   a Pipecat ``OpenAILLMService`` pointed at LM Studio (or any other
@@ -9,6 +9,11 @@ Two backends are wired:
   :class:`pipecat.processors.frame_processor.FrameProcessor` that proxies
   each LLM turn to the n8n helmsman webhook described in ``API.md``.
   Handles both command parsing and RAG question answering.
+* ``langgraph`` -- :mod:`voice_agent.backends.llm.langgraph_helmsman`, the
+  in-backend reimplementation of the n8n runtime path using LangGraph +
+  LangChain + Langfuse (see ``docs/LANGGRAPH_BACKEND.md``). Same command +
+  RAG behaviour as ``n8n`` with no external workflow engine. Requires the
+  optional ``langgraph`` extra.
 
 To add a backend: create a module under ``backends/llm/`` exposing
 ``build_llm(llm_config)`` and add one entry to ``_BUILDERS``. The signature
@@ -22,11 +27,12 @@ from typing import Any, Callable
 
 from pipecat.processors.frame_processor import FrameProcessor
 
-from voice_agent.backends.llm import n8n, openai_compatible
+from voice_agent.backends.llm import langgraph_helmsman, n8n, openai_compatible
 
 _BUILDERS: dict[str, Callable[[Any], FrameProcessor]] = {
     "openai_compatible": openai_compatible.build_llm,
     "n8n": n8n.build_llm,
+    "langgraph": langgraph_helmsman.build_llm,
 }
 
 

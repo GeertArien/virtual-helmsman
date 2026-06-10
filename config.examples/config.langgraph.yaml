@@ -1,0 +1,72 @@
+# Example: in-backend LangGraph helmsman (no n8n).
+#
+# Replaces the n8n runtime workflow with the native `langgraph` LLM backend
+# (intent classify -> command parse / hybrid-RAG with rerank + adjacent-chunk
+# expansion). Requires the optional extra:  pip install -e ".[langgraph]"
+#
+# Differs from the default only in the `llm` block. The LLM + embeddings run on
+# LM Studio's /v1 server; retrieval runs on Qdrant. See docs/LANGGRAPH_BACKEND.md.
+
+stt:
+  backend: parakeet_onnx
+  model: nemo-parakeet-tdt-0.6b-v2
+  device: cuda
+  language: en
+  quantization: int8
+
+tts:
+  backend: kokoro
+  voice: af_bella
+  device: cuda
+
+vad:
+  backend: silero
+  threshold: 0.5
+  stop_secs: 0.8
+
+turn_detection:
+  backend: smart_turn_v3
+  device: cpu
+
+llm:
+  backend: langgraph
+  base_url: http://localhost:1234/v1   # LM Studio /v1 (chat + bge-m3 embeddings)
+  model: unsloth/gemma-4-e4b-it
+  api_key_env: LLM_API_KEY
+  timeout_seconds: 30
+  max_retries: 1
+  rerank: true                         # LLM listwise rerank to top-3 (else RRF top-3)
+  expansion: true                      # adjacent-chunk (±1) expansion
+  # --- RAG retrieval (Qdrant) ---
+  qdrant_url: http://localhost:6333    # omit to run command-only (questions error gracefully)
+  qdrant_collection: maritime_hybrid
+  qdrant_api_key_env: QDRANT_API_KEY
+  embedding_model: text-embedding-bge-m3
+  retrieval_top_k: 20
+  # --- Langfuse tracing (optional) ---
+  langfuse_enabled: false              # true -> trace every LLM/retrieval step
+  langfuse_host:                       # blank = Langfuse Cloud; or http://localhost:3000
+  langfuse_public_key_env: LANGFUSE_PUBLIC_KEY
+  langfuse_secret_key_env: LANGFUSE_SECRET_KEY
+
+simulator:
+  backend: mock
+  real:
+    host: 127.0.0.1
+    port: 9100
+    connect_timeout_seconds: 2
+  mock:
+    initial_heading: 0
+    initial_engine_order: stop
+    log_commands: true
+
+audio:
+  input_device: default
+  output_device: default
+  sample_rate: 16000
+
+logging:
+  level: info
+  format: json
+  conversation_log_path: ./logs/conversations
+  metrics_log_path: ./logs/metrics
