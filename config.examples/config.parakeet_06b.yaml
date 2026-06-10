@@ -24,12 +24,9 @@ turn_detection:
   device: cpu
 
 llm:
-  backend: n8n
-  base_url: http://localhost:5678
-  webhook_path: /webhook/helmsman
+  backend: openai_compatible
+  base_url: http://localhost:1234/v1
   model: unsloth/gemma-4-e4b-it
-  rerank: true
-  expansion: true
   api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1

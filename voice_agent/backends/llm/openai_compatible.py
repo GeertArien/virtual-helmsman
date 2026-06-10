@@ -2,7 +2,8 @@
 
 Wraps Pipecat's ``OpenAILLMService`` pointed at the ``llm.base_url``. Typical
 target is LM Studio's ``/v1`` endpoint -- one of two backends the helmsman
-supports (the other is :mod:`voice_agent.backends.llm.n8n`).
+supports (the other is :mod:`voice_agent.backends.llm.langgraph_helmsman`,
+which adds intent routing + RAG).
 
 The :data:`~voice_agent.actions.schema.RESPONSE_FORMAT` JSON-schema constraint
 is baked in here -- LM Studio honours ``response_format`` to grammar-constrain

@@ -1,3 +1,9 @@
+> **Historical (n8n) — superseded.** The runtime helmsman no longer runs on
+> n8n; it runs in-backend via the `langgraph` LLM backend
+> ([`LANGGRAPH_BACKEND.md`](LANGGRAPH_BACKEND.md)). This document is retained
+> as the behavioural spec that the in-backend port reproduces (intent routing,
+> command/RAG branches, rerank/expansion toggles, response shapes).
+
 # Virtual Helmsman — External API
 
 The unified workflow exposes two HTTP entry points:

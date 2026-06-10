@@ -66,33 +66,26 @@ def test_resolved_api_key_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.llm.resolved_api_key() == "secret-token"
 
 
-def test_n8n_auth_header_defaults() -> None:
+def test_llm_qdrant_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     config = parse_config(_minimal())
-    assert config.llm.n8n_auth_header == "X-N8N-API-KEY"
-    assert config.llm.n8n_api_key_env == "N8N_API_KEY"
+    monkeypatch.delenv("QDRANT_API_KEY", raising=False)
+    assert config.llm.resolved_qdrant_headers() == {}
+    monkeypatch.setenv("QDRANT_API_KEY", "qd-secret")
+    assert config.llm.resolved_qdrant_headers() == {"api-key": "qd-secret"}
 
 
-def test_resolved_n8n_headers_empty_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("N8N_API_KEY", raising=False)
+def test_llm_audit_defaults_off() -> None:
     config = parse_config(_minimal())
-    assert config.llm.resolved_n8n_headers() == {}
+    assert config.llm.audit_enabled is False
+    assert config.llm.audit_db_path == "./data/ingestion.db"
 
 
-def test_resolved_n8n_headers_uses_configured_name(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("N8N_KEY_ALT", "n8n-secret")
-    config = parse_config(
-        {
-            **_minimal(),
-            "llm": {
-                **_minimal()["llm"],
-                "n8n_auth_header": "X-Custom-Auth",
-                "n8n_api_key_env": "N8N_KEY_ALT",
-            },
-        }
-    )
-    assert config.llm.resolved_n8n_headers() == {"X-Custom-Auth": "n8n-secret"}
+def test_n8n_backend_rejected() -> None:
+    """n8n was removed -- selecting it is now a validation error."""
+    data = _minimal()
+    data["llm"]["backend"] = "n8n"
+    with pytest.raises(ValidationError):
+        parse_config(data)
 
 
 def test_invalid_stt_backend_rejected() -> None:

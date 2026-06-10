@@ -414,3 +414,49 @@ def parse_rag_answer(raw: str, chunks: list[dict[str, Any]]) -> dict[str, Any]:
 def format_question_output(parsed: dict[str, Any]) -> str:
     """Assemble the user-facing answer string: answer + a Source: line."""
     return f"{parsed.get('answer', '')}\n\nSource: {parsed.get('citation') or 'Source unknown'}"
+
+
+# --- runtime audit rows (the n8n "Log Runtime Command/Question" analogue) ----
+#
+# Written per turn to the shared audit store so the Audit page shows live
+# helmsman activity, not just ingestion. Field values mirror API.md iteration 9.
+
+RUNTIME_COMMAND = "command_runtime"
+RUNTIME_QUESTION = "question_runtime"
+RUNTIME_LLM_ERROR = "llm_error_runtime"
+
+
+def _bool_str(value: Any) -> str:
+    return "true" if value else "false"
+
+
+def command_audit_row(envelope: dict[str, Any]) -> tuple[str, str, str]:
+    """``(document_naam, actie, resultaat)`` for a command turn."""
+    action = envelope.get("action") or {}
+    output = envelope.get("response", "") or ""
+    return (
+        "n.v.t. (command)",
+        RUNTIME_COMMAND,
+        f"action_type={action.get('type')} | output={output[:120]}",
+    )
+
+
+def question_audit_row(parsed: dict[str, Any], output: str) -> tuple[str, str, str]:
+    """``(document_naam, actie, resultaat)`` for a RAG question turn."""
+    chunk = parsed.get("source_chunk") or {}
+    filename = chunk.get("filename") or "n.v.t."
+    return (
+        filename,
+        RUNTIME_QUESTION,
+        (
+            f"chunk={parsed.get('source_chunk_id')} | "
+            f"citation_reliable={_bool_str(parsed.get('citation_reliable'))} | "
+            f"parse_failure={_bool_str(parsed.get('parse_failure'))} | "
+            f"output={(output or '')[:120]}"
+        ),
+    )
+
+
+def error_audit_row(reason: str) -> tuple[str, str, str]:
+    """``(document_naam, actie, resultaat)`` for a failed turn (LLM/Qdrant down)."""
+    return ("onbekend", RUNTIME_LLM_ERROR, f"error={(reason or 'unknown')[:200]}")

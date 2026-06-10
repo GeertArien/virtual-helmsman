@@ -1,17 +1,16 @@
 """Pipecat frame processor that runs each turn through the LangGraph helmsman.
 
-Drop-in peer of :class:`voice_agent.backends.llm.n8n.N8nLLMService`: it sits in
-the same pipeline slot and emits the identical frame triple --
-``LLMFullResponseStartFrame`` -> one ``LLMTextFrame`` carrying the internal
-HelmsmanResponse JSON string -> ``LLMFullResponseEndFrame``. It is not a
-streaming source; the graph returns synchronously and the whole reply lands in
-one text frame.
+A Pipecat ``FrameProcessor`` in the same pipeline slot as the OpenAI service:
+it emits the frame triple ``LLMFullResponseStartFrame`` -> one ``LLMTextFrame``
+carrying the internal HelmsmanResponse JSON string -> ``LLMFullResponseEndFrame``.
+It is not a streaming source; the graph returns synchronously and the whole
+reply lands in one text frame.
 
-Where the n8n adapter POSTs to a webhook, this one ``await``\\s the compiled
-LangGraph runner built in :mod:`graph`. Every failure mode (graph exception,
-empty context) is mapped to an ``error`` envelope so the downstream
-:class:`JsonActionProcessor` never sees malformed JSON and the helmsman speaks
-the graceful "Lost contact with the bridge" fallback.
+It ``await``\\s the compiled LangGraph runner built in :mod:`graph`. Every
+failure mode (graph exception, empty context) is mapped to an ``error``
+envelope so the downstream :class:`JsonActionProcessor` never sees malformed
+JSON and the helmsman speaks the graceful "Lost contact with the bridge"
+fallback.
 """
 
 from __future__ import annotations
@@ -34,6 +33,7 @@ from voice_agent.logging_setup import get_logger
 from . import helpers
 
 Runner = Callable[[str], Awaitable[dict[str, Any]]]
+AuditWriter = Callable[[str, str, str], Awaitable[None]]
 
 
 class LangGraphLLMService(FrameProcessor):
@@ -54,11 +54,13 @@ class LangGraphLLMService(FrameProcessor):
         *,
         runner: Runner,
         client: httpx.AsyncClient | None = None,
+        audit_writer: AuditWriter | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._runner = runner
         self._client = client
+        self._audit_writer = audit_writer
         self._log = get_logger("llm.langgraph")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection) -> None:
@@ -84,11 +86,17 @@ class LangGraphLLMService(FrameProcessor):
             await self.push_frame(LLMFullResponseEndFrame())
 
     async def _run(self, chat_input: str) -> dict[str, Any]:
-        """Run the graph; map any failure to a parseable ``error`` envelope."""
+        """Run the graph; map any failure to a parseable ``error`` envelope.
+
+        Command/question turns write their own runtime audit row inside the
+        graph (where the source metadata lives); only the failure path needs
+        to log here, since the graph never produced a result to audit.
+        """
         try:
             envelope = await self._runner(chat_input)
         except Exception as exc:  # noqa: BLE001 -- never surface a raw crash to TTS
             self._log.error("langgraph_turn_failed", error=str(exc))
+            await self._audit(helpers.error_audit_row(f"helmsman graph failed: {exc}"))
             return helpers.error_envelope(f"helmsman graph failed: {exc}")
         self._log.info(
             "langgraph_turn",
@@ -96,11 +104,44 @@ class LangGraphLLMService(FrameProcessor):
         )
         return envelope
 
+    async def _audit(self, row: tuple[str, str, str]) -> None:
+        """Best-effort runtime audit write -- never breaks the turn."""
+        if self._audit_writer is None:
+            return
+        try:
+            await self._audit_writer(*row)
+        except Exception as exc:  # noqa: BLE001
+            self._log.warning("audit_write_failed", error=str(exc))
+
     async def cleanup(self) -> None:
         """Pipecat lifecycle hook -- close the shared httpx client on shutdown."""
         await super().cleanup()
         if self._client is not None:
             await self._client.aclose()
+
+
+def _build_audit_writer(config: Any) -> AuditWriter | None:
+    """An async audit-row writer backed by the shared SQLite store, or ``None``.
+
+    Enabled by ``llm.audit_enabled``; writes ``command_runtime`` /
+    ``question_runtime`` / ``llm_error_runtime`` rows into the same
+    ``audit_log`` table the local ingestion pipeline uses (``llm.audit_db_path``,
+    matching ``review.db_path`` by default), so the Audit page shows runtime
+    helmsman activity alongside ingestion events.
+    """
+    if not getattr(config, "audit_enabled", False):
+        return None
+
+    from voice_agent.ingestion.store import IngestionStore
+
+    store = IngestionStore(config.audit_db_path)
+
+    async def writer(document_naam: str, actie: str, resultaat: str) -> None:
+        import asyncio
+
+        await asyncio.to_thread(store.insert_audit, document_naam, actie, resultaat)
+
+    return writer
 
 
 def build_llm(config: Any) -> LangGraphLLMService:
@@ -115,5 +156,8 @@ def build_llm(config: Any) -> LangGraphLLMService:
     from . import graph
 
     client = httpx.AsyncClient(timeout=config.timeout_seconds)
-    runner = graph.build_runner(config, client)
-    return LangGraphLLMService(runner=runner, client=client)
+    audit_writer = _build_audit_writer(config)
+    runner = graph.build_runner(config, client, audit_writer=audit_writer)
+    return LangGraphLLMService(
+        runner=runner, client=client, audit_writer=audit_writer
+    )

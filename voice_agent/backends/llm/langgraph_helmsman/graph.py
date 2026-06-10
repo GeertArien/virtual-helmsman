@@ -44,6 +44,8 @@ _log = get_logger("llm.langgraph")
 
 # Type of the per-turn entry point the service awaits.
 Runner = Callable[[str], Awaitable[dict[str, Any]]]
+# Best-effort audit sink: (document_naam, actie, resultaat) -> None.
+AuditWriter = Callable[[str, str, str], Awaitable[None]]
 
 
 class _MissingDependency(ImportError):
@@ -65,14 +67,28 @@ def _require_stack() -> tuple[Any, Any, Any, Any, Any, Any]:
     return StateGraph, START, END, ChatOpenAI, SystemMessage, HumanMessage
 
 
-def build_runner(config: Any, client: httpx.AsyncClient) -> Runner:
+def build_runner(
+    config: Any,
+    client: httpx.AsyncClient,
+    audit_writer: AuditWriter | None = None,
+) -> Runner:
     """Compile the helmsman graph and return a per-turn runner coroutine.
 
     ``client`` is owned by the caller (the service) and reused for every
-    Qdrant/embedding call; it is closed on service shutdown. Raises
+    Qdrant/embedding call; it is closed on service shutdown. ``audit_writer``,
+    when supplied, receives one runtime audit row per command/question turn
+    (best-effort -- a failed write is logged, never raised). Raises
     :class:`_MissingDependency` if the optional stack is absent.
     """
     StateGraph, START, END, ChatOpenAI, SystemMessage, HumanMessage = _require_stack()
+
+    async def _audit(row: tuple[str, str, str]) -> None:
+        if audit_writer is None:
+            return
+        try:
+            await audit_writer(*row)
+        except Exception as exc:  # noqa: BLE001 -- audit must never break a turn
+            _log.warning("audit_write_failed", error=str(exc))
 
     api_key = config.resolved_api_key() or "not-needed"
     qdrant_headers = config.resolved_qdrant_headers()
@@ -109,7 +125,9 @@ def build_runner(config: Any, client: httpx.AsyncClient) -> Runner:
         resp = await command_llm.ainvoke(
             [SystemMessage(SYSTEM_PROMPT), HumanMessage(state["chat_input"])]
         )
-        return {"result": helpers.command_envelope(str(resp.content))}
+        envelope = helpers.command_envelope(str(resp.content))
+        await _audit(helpers.command_audit_row(envelope))
+        return {"result": envelope}
 
     async def retrieve_node(state: dict[str, Any]) -> dict[str, Any]:
         if not config.qdrant_url:
@@ -171,7 +189,9 @@ def build_runner(config: Any, client: httpx.AsyncClient) -> Runner:
             ]
         )
         parsed = helpers.parse_rag_answer(str(resp.content), chunks)
-        return {"result": helpers.answer_envelope(helpers.format_question_output(parsed))}
+        output = helpers.format_question_output(parsed)
+        await _audit(helpers.question_audit_row(parsed, output))
+        return {"result": helpers.answer_envelope(output)}
 
     graph = StateGraph(dict)
     graph.add_node("classify", classify_node)

@@ -1,15 +1,14 @@
-# Local HITL ingestion — `review.backend: local`
+# In-backend HITL ingestion
 
-The local review backend reimplements the n8n **document-ingestion +
+The review pipeline reimplements the n8n **document-ingestion +
 human-in-the-loop review + audit** workflows (`ingestion_with_hitl`,
 `webapp_api`; contract in [`REVIEW_API.md`](REVIEW_API.md)) natively in this
 project. Together with the [`langgraph` LLM backend](LANGGRAPH_BACKEND.md)
-it completes the n8n → backend migration: with both enabled, no n8n instance
-is needed at all.
+it completes the n8n → backend migration: **n8n is no longer used at all.**
 
-It is selected by config alone and serves the **same five `/api/review/*`
-routes with the same shapes** as the n8n proxy, so the frontend's
-Documents / Review / Audit pages work unchanged.
+It serves the **same five `/api/review/*` routes with the same shapes** the
+frontend's Documents / Review / Audit pages already call, so those pages work
+unchanged.
 
 ```bash
 pip install -e ".[langgraph]"   # LangChain + Langfuse + pypdf
@@ -72,14 +71,12 @@ it.
 
 ```yaml
 review:
-  backend: local                       # n8n (default) | local
   db_path: ./data/ingestion.db         # pending batches + audit log
   llm_base_url: http://localhost:1234/v1   # LM Studio (summary + embeddings)
   llm_api_key_env: LLM_API_KEY
   qdrant_url: http://localhost:6333
   qdrant_api_key_env: QDRANT_API_KEY
   embedding_model: text-embedding-bge-m3
-  # shared with the n8n mode:
   default_document_type: PDF
   default_collection_name: maritime_hybrid
   default_categories: algemeen
@@ -91,8 +88,11 @@ review:
 
 Write endpoints return 503 with a "configure `review.<field>`" message until
 `qdrant_url` and `llm_base_url` are set; the read endpoints (pending list,
-audit log) work immediately. The n8n proxy mode and all its fields remain
-available — flip `backend` back at any time.
+audit log) work immediately.
+
+Set `db_path` to the same file as `llm.audit_db_path` so the runtime helmsman's
+`command_runtime` / `question_runtime` rows and the ingestion rows share one
+audit log — the Audit page then shows both.
 
 ## Differences from the n8n contract (intentional)
 

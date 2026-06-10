@@ -59,8 +59,7 @@ documents:
   qdrant_url: http://localhost:6333
   qdrant_collection: maritime_hybrid
 
-review:
-  backend: local                       # in-backend HITL ingestion (no n8n)
+review:                                # in-backend HITL ingestion (no n8n)
   db_path: ./data/ingestion.db         # pending review batches + audit log
   llm_base_url: http://localhost:1234/v1   # LM Studio (doc summary + embeddings)
   llm_api_key_env: LLM_API_KEY
