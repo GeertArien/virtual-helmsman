@@ -59,7 +59,7 @@ class AssistantReplyEvent(_BaseEvent):
 class ActionDispatchedEvent(_BaseEvent):
     """An action was carried out (or acknowledged) against the simulator.
 
-    ``action`` is one of the n8n action types (``rudder``, ``throttle``,
+    ``action`` is one of the helmsman action types (``rudder``, ``throttle``,
     ``navigation``, ``autopilot``, ``anchor``, ``status_query``). The
     ``details`` shape is action-specific; see
     :meth:`~voice_agent.actions.processor.JsonActionProcessor._publish_turn_events`

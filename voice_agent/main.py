@@ -57,8 +57,8 @@ async def _maybe_start_api(
         control_state=built.control_state,
         inject_text=build_text_injector(built.task, built.llm_context),
         config_path=Path(config_path),
-        # Shared with /api/review/upload as the default `Model` form field
-        # forwarded to the n8n ingestion webhook (see REVIEW_API.md).
+        # Default `Model` for /api/review/upload's doc-summary call, so
+        # ingestion uses the same model as the helmsman LLM path.
         llm_model=config.llm.model,
     )
     server = ApiServer(app, host=config.api.host, port=config.api.port)
@@ -70,7 +70,7 @@ async def _run(config_path: str) -> None:
     """Load config, build the pipeline (and optional API), and run until interrupted."""
     # Load secrets from a local .env (if present) into the process environment
     # before anything reads os.environ -- API keys are referenced by env-var
-    # name (config *_api_key_env / n8n_api_key_env). Real env vars already set
+    # name (config *_api_key_env). Real env vars already set
     # take precedence; override=False is python-dotenv's default.
     load_dotenv()
     config = load_config(config_path)

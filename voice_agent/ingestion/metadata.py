@@ -30,7 +30,7 @@ SUMMARY_SYSTEM = (
     "sentence summary, in English, with no preamble or commentary."
 )
 
-# Edits shorter than this (after trim) are silently rejected, per REVIEW_API.md.
+# Edits shorter than this (after trim) are silently rejected.
 MIN_EDITED_LEN = 50
 
 

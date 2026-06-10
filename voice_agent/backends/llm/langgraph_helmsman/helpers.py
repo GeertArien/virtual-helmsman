@@ -416,10 +416,10 @@ def format_question_output(parsed: dict[str, Any]) -> str:
     return f"{parsed.get('answer', '')}\n\nSource: {parsed.get('citation') or 'Source unknown'}"
 
 
-# --- runtime audit rows (the n8n "Log Runtime Command/Question" analogue) ----
+# --- runtime audit rows -------------------------------------------------------
 #
 # Written per turn to the shared audit store so the Audit page shows live
-# helmsman activity, not just ingestion. Field values mirror API.md iteration 9.
+# helmsman activity, not just ingestion.
 
 RUNTIME_COMMAND = "command_runtime"
 RUNTIME_QUESTION = "question_runtime"

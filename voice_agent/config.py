@@ -207,8 +207,8 @@ class DocumentsConfig(_Base):
     ingestion pipelines store metadata under different keys; defaults match
     the common "document_id / title / source / uploaded_at" convention.
 
-    Uploads live under :class:`ReviewConfig` -- this block intentionally has
-    no n8n field.
+    Uploads live under :class:`ReviewConfig` -- this block is read-only
+    qdrant management (list / delete).
     """
 
     # qdrant REST base URL (e.g. "http://127.0.0.1:6333"), collection name,

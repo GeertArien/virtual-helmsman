@@ -6,17 +6,16 @@ acknowledgement. The Pydantic models here validate that object;
 :data:`RESPONSE_FORMAT` is the JSON schema handed to the LLM server so it
 grammar-constrains decoding to the right shape.
 
-The vocabulary mirrors the n8n helmsman workflow (see ``n8n_system_prompt.txt``
-in the repo root and ``API.md``). The local LM Studio backend and the n8n
-backend therefore produce the same on-the-wire action shape -- only their
-"envelope" differs (n8n adds an ``intent`` / ``output`` / ``source`` layer for
-its RAG branch). The simulator-side translation lives in
-:mod:`voice_agent.actions.dispatch`; the simulator client itself still speaks
-its narrower native protocol (``set_heading`` / ``set_engine_telegraph`` /
-``get_state``).
+The vocabulary is defined by the helmsman system prompt
+(:data:`voice_agent.actions.prompt.SYSTEM_PROMPT`). Both LLM backends produce
+the same on-the-wire action shape; the `langgraph` backend wraps the RAG
+branch in a synthetic ``answer`` action (see :class:`AnswerAction`). The
+simulator-side translation lives in :mod:`voice_agent.actions.dispatch`; the
+simulator client itself still speaks its narrower native protocol
+(``set_heading`` / ``set_engine_telegraph`` / ``get_state``).
 
-``multi_step`` from the n8n prompt is intentionally omitted -- v1 dispatches
-one action per turn.
+``multi_step`` from the prompt is intentionally omitted -- v1 dispatches one
+action per turn.
 """
 
 from __future__ import annotations
@@ -110,14 +109,13 @@ class ErrorAction(BaseModel):
 class AnswerAction(BaseModel):
     """A RAG-style information answer -- no simulator call, just speak.
 
-    Not part of the n8n LLM-side action vocabulary in ``n8n_system_prompt.txt``
-    (the LLM never emits this). Synthesised by the n8n *adapter* when the
-    workflow envelope reports ``intent: "question"`` -- in that branch the
-    envelope's ``output`` is a RAG answer, the ``action`` field is null, and
-    nothing needs to drive the simulator.
+    Not part of the LLM-facing action vocabulary in
+    :data:`voice_agent.actions.prompt.SYSTEM_PROMPT` (the LLM never emits
+    this). Synthesised by the `langgraph` backend on a ``question`` turn --
+    the RAG answer goes in ``response`` and nothing drives the simulator.
 
-    The local LM Studio backend never produces this type because its prompt
-    doesn't teach it -- LM Studio is command-only by design.
+    The `openai_compatible` backend never produces this type (command-only
+    by design).
     """
 
     type: Literal["answer"]

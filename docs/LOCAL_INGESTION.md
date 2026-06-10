@@ -1,10 +1,10 @@
 # In-backend HITL ingestion
 
-The review pipeline reimplements the n8n **document-ingestion +
+The review pipeline reimplements the original n8n **document-ingestion +
 human-in-the-loop review + audit** workflows (`ingestion_with_hitl`,
-`webapp_api`; contract in [`REVIEW_API.md`](REVIEW_API.md)) natively in this
-project. Together with the [`langgraph` LLM backend](LANGGRAPH_BACKEND.md)
-it completes the n8n → backend migration: **n8n is no longer used at all.**
+`webapp_api`) natively in this project. Together with the
+[`langgraph` LLM backend](LANGGRAPH_BACKEND.md) it completes the n8n → backend
+migration: **n8n is no longer used at all.**
 
 It serves the **same five `/api/review/*` routes with the same shapes** the
 frontend's Documents / Review / Audit pages already call, so those pages work
@@ -99,9 +99,9 @@ audit log — the Audit page then shows both.
 - **No `resume_url`** anywhere: the n8n proxy already stripped it from
   `/pending` responses, so the frontend never saw it; local mode simply has
   none. Resume stays `POST /api/review/{batch_id}/resume`.
-- **Resume response** is the clean
+- **Resume response** is a clean
   `{"status": "ingested"|"rejected", approved, edited, rejected, indexed}`
-  shape REVIEW_API.md listed as a "future tightening", instead of n8n's raw
-  last-node output. The frontend only checks `response.ok`.
+  envelope instead of n8n's raw last-node output. The frontend only checks
+  `response.ok`.
 - **Audit-log `id`s** restart from 1 in the local table; the n8n datatable's
   history is not migrated.

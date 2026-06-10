@@ -53,19 +53,19 @@ dependencies = [
 real-sim = ['pythonnet>=3.0.5 ; sys_platform == "win32"']
 # parakeet_nemo STT backend. Heavy, optional — parakeet_onnx is the default.
 nemo = ["nemo-toolkit[asr]>=2.0"]
-# In-backend `langgraph` LLM backend: reimplements the n8n runtime helmsman
-# (intent → command / hybrid-RAG) natively with LangGraph orchestration,
-# LangChain chat models, and optional Langfuse tracing. Optional because the
-# default `n8n` / `openai_compatible` backends don't need it. Qdrant and the
-# embedding endpoint are reached over plain HTTP (httpx, already a core dep),
-# so no qdrant-client is pulled in. See docs/LANGGRAPH_BACKEND.md.
+# In-backend `langgraph` LLM backend + local HITL ingestion: the helmsman
+# (intent → command / hybrid-RAG) and document ingestion run natively with
+# LangGraph orchestration, LangChain chat models, optional Langfuse tracing,
+# and pypdf extraction. Optional because the `openai_compatible` backend
+# doesn't need it. Qdrant and the embedding endpoint are reached over plain
+# HTTP (httpx, already a core dep), so no qdrant-client is pulled in.
+# See docs/LANGGRAPH_BACKEND.md and docs/LOCAL_INGESTION.md.
 langgraph = [
     "langgraph>=0.2.0,<1.0",
     "langchain-core>=0.3.0,<1.0",
     "langchain-openai>=0.2.0,<1.0",
     "langfuse>=2.0",
-    # PDF text extraction for the local HITL ingestion pipeline
-    # (review.backend: local). See docs/LOCAL_INGESTION.md.
+    # PDF text extraction for the HITL ingestion pipeline.
     "pypdf>=5.0",
 ]
 # CUDA 12.x runtime + cuDNN 9.x for onnxruntime-gpu, as venv-local pip wheels

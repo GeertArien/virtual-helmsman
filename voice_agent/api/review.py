@@ -1,9 +1,8 @@
 """HTTP endpoints for the in-backend HITL chunk-review flow.
 
 Five routes mounted at ``/api/review``, backed by the in-process
-:class:`~voice_agent.ingestion.engine.IngestionEngine` (the local replacement
-for the n8n ingestion + ``webapp_api`` workflows; contract in
-``REVIEW_API.md``):
+:class:`~voice_agent.ingestion.engine.IngestionEngine` (see
+``docs/LOCAL_INGESTION.md``):
 
 * ``POST /api/review/upload``            -- accept a PDF, return 202, and run
   the ingest (extract -> clean -> summary -> chunk -> pending batch) in the
@@ -37,8 +36,7 @@ from voice_agent.logging_setup import get_logger
 
 
 class AuditEventRequest(BaseModel):
-    """One UI-side audit row. Mirrors the ``POST /audit-event`` contract in
-    ``REVIEW_API.md``: three required strings, each bounded to 500 chars.
+    """One UI-side audit row: three required strings, each bounded to 500 chars.
 
     The semantics of each field are chosen by the caller; for the Art. 50
     transparency gate the frontend sends ``actie="art50_acknowledged"``,

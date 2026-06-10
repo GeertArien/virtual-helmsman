@@ -1,15 +1,14 @@
 # `langgraph` LLM backend — in-backend helmsman
 
-The `langgraph` LLM backend reimplements the **runtime** path of the n8n
-helmsman workflow (`POST /webhook/helmsman`, documented in
-[`API.md`](API.md)) natively in this project, with no external workflow
-engine. It is a drop-in peer of the `n8n` and `openai_compatible` backends:
-same pipeline slot, same internal action contract, selected by config alone.
+The `langgraph` LLM backend runs the **runtime** helmsman path in this project
+with no external workflow engine: it classifies each turn, parses commands, and
+answers questions via hybrid RAG. It is a drop-in peer of the
+`openai_compatible` backend — same pipeline slot, same internal action
+contract, selected by config alone.
 
-It is the first piece of the n8n → backend migration tracked in the project's
-GitHub issue. The HITL document-ingestion + audit path
-([`REVIEW_API.md`](REVIEW_API.md)) is **not** part of this backend yet — it
-remains on n8n until a follow-up.
+It is one half of the in-backend helmsman; the document-ingestion + HITL review
++ audit side is documented in [`LOCAL_INGESTION.md`](LOCAL_INGESTION.md).
+Together they replaced the original n8n integration entirely.
 
 ## Stack
 

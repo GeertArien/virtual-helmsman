@@ -72,9 +72,9 @@ def create_app(
     sessions is clean.
 
     Passing ``documents`` mounts the qdrant management routes; passing
-    ``review`` mounts the n8n HITL review routes. When either is omitted,
-    that family of endpoints simply isn't registered (the frontend gets a
-    404 rather than a configuration error).
+    ``review`` mounts the in-backend HITL review routes. When either is
+    omitted, that family of endpoints simply isn't registered (the frontend
+    gets a 404 rather than a configuration error).
 
     ``control_state`` + ``inject_text`` together mount the ``/api/control``
     router (mic toggle, text-command injection). Both must be supplied; if
@@ -96,9 +96,8 @@ def create_app(
         docs_router = create_documents_router(documents)
     review_router: APIRouter | None = None
     if review is not None:
-        # llm_model is forwarded as the default ``Model`` form field on
-        # ingestion uploads -- keeps the doc-summary call inside the n8n
-        # ingestion pipeline on the same model the helmsman LLM path uses.
+        # llm_model is the default ``Model`` for ingestion uploads -- keeps
+        # the doc-summary call on the same model the helmsman LLM path uses.
         review_router = create_review_router(review, llm_model=llm_model)
 
     @asynccontextmanager

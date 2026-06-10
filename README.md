@@ -13,17 +13,15 @@ over HTTP; two backends ship:
   answers questions via hybrid RAG over qdrant, calling LM Studio (or any
   OpenAI-compatible `/v1` server) through LangChain, with optional Langfuse
   tracing. No external workflow engine. Full design in
-  [`docs/LANGGRAPH_BACKEND.md`](docs/LANGGRAPH_BACKEND.md); the runtime HTTP
-  contract it reproduces is in [`docs/API.md`](docs/API.md).
+  [`docs/LANGGRAPH_BACKEND.md`](docs/LANGGRAPH_BACKEND.md).
 - **`openai_compatible`** — direct chat completion against any
   OpenAI-shaped `/v1` server (e.g. LM Studio). Command parsing only, no
   retrieval.
 
 > **n8n removed.** Earlier versions proxied the helmsman and the document
-> ingestion to an external n8n instance. Both now run in-backend
-> (`langgraph` LLM backend + the local HITL ingestion pipeline,
-> [`docs/LOCAL_INGESTION.md`](docs/LOCAL_INGESTION.md)); `docs/API.md` and
-> `docs/REVIEW_API.md` are kept as the behavioural spec those ports match.
+> ingestion to an external n8n instance. Both now run in-backend — the
+> `langgraph` LLM backend and the local HITL ingestion pipeline
+> ([`docs/LOCAL_INGESTION.md`](docs/LOCAL_INGESTION.md)).
 
 Every model and the simulator client is a swappable backend selected from
 `config.yaml` — no code edits to switch.
@@ -394,8 +392,8 @@ voice_agent/        package: config, pipeline, metrics, logging, backends, actio
 scripts/            smoke, report, bench_stt, bench_tts
 tests/              unit tests (no network, no GPU)
 frontend/           SvelteKit dashboard (see frontend/README.md)
-docs/               LANGGRAPH_BACKEND.md, LOCAL_INGESTION.md; API.md /
-                    REVIEW_API.md (behavioural spec the in-backend ports match)
+docs/               LANGGRAPH_BACKEND.md (runtime helmsman),
+                    LOCAL_INGESTION.md (HITL ingestion)
 config.yaml         default config
 config.examples/    backend-variant configs
 ```
