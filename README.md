@@ -1,5 +1,7 @@
 # Virtual Helmsman
 
+[![CI](https://github.com/GeertArien/virtual-helmsman/actions/workflows/ci.yml/badge.svg)](https://github.com/GeertArien/virtual-helmsman/actions/workflows/ci.yml)
+
 A modular local voice agent for a ship simulator. It listens to spoken
 English, replies in speech, and either executes ship-simulator actions or
 answers maritime questions grounded in a RAG corpus — targeting
