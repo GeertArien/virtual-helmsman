@@ -81,6 +81,9 @@ export interface SessionInfo {
   llm_model: string;
   subscribers: number;
   events_dropped: number;
+  /** True when the backend mounts /ws/audio (audio.browser_enabled), i.e. the
+   *  dashboard can capture the mic and play audio in the browser. */
+  browser_audio?: boolean;
 }
 
 /** Where the Python control plane is reachable. Override via the URL query
@@ -96,6 +99,12 @@ export function backendUrl(): string {
 export function wsUrl(): string {
   const http = backendUrl();
   return http.replace(/^http/i, 'ws') + '/ws/events';
+}
+
+/** WebSocket URL for the browser-audio bridge (/ws/audio). Same origin
+ *  override as the event stream. */
+export function audioWsUrl(): string {
+  return backendUrl().replace(/^http/i, 'ws') + '/ws/audio';
 }
 
 export async function fetchSession(): Promise<SessionInfo> {

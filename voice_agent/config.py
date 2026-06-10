@@ -178,6 +178,11 @@ class AudioConfig(_Base):
     input_device: str = "default"
     output_device: str = "default"
     sample_rate: int = 16000
+    # Browser audio (issue #7): when true, the control plane mounts the
+    # ``/ws/audio`` WebSocket so the dashboard can capture the mic and play
+    # audio in the browser (raw PCM16 at ``sample_rate``). Off by default --
+    # the agent uses local hardware audio (LocalAudioTransport) unchanged.
+    browser_enabled: bool = False
 
 
 class LoggingConfig(_Base):

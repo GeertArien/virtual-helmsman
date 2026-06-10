@@ -47,6 +47,7 @@ audio:
   input_device: default
   output_device: default
   sample_rate: 16000
+  browser_enabled: false           # mount /ws/audio so the dashboard can capture the mic + play audio in-browser (see docs/BROWSER_AUDIO.md)
 logging:
   level: info
   format: json

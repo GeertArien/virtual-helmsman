@@ -1,6 +1,7 @@
 <script lang="ts">
   import { live } from '$lib/liveState.svelte';
   import ChatPanel from '$lib/components/ChatPanel.svelte';
+  import BrowserAudioPanel from '$lib/components/BrowserAudioPanel.svelte';
   import ConversationPanel from '$lib/components/ConversationPanel.svelte';
   import ShipStatePanel from '$lib/components/ShipStatePanel.svelte';
   import MetricsPanel from '$lib/components/MetricsPanel.svelte';
@@ -13,6 +14,9 @@
   <section class="left">
     <ConversationPanel entries={live.entries} />
     <ChatPanel />
+    {#if live.session?.browser_audio}
+      <BrowserAudioPanel />
+    {/if}
   </section>
   <section class="right">
     <ShipStatePanel state={live.shipState} />

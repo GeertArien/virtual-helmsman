@@ -25,13 +25,14 @@ from typing import AsyncIterator
 from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
+from voice_agent.api.audio_ws import create_audio_router
 from voice_agent.api.config_router import create_config_router
 from voice_agent.api.control import ControlState
 from voice_agent.api.control_router import TextInjector, create_control_router
 from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
 from voice_agent.api.review import create_review_router
-from voice_agent.config import DocumentsConfig, ReviewConfig
+from voice_agent.config import AudioConfig, DocumentsConfig, ReviewConfig
 from voice_agent.logging_setup import get_logger
 
 
@@ -47,6 +48,9 @@ class SessionInfo:
     turn_backend: str
     simulator_backend: str
     llm_model: str
+    # True when /ws/audio is mounted (audio.browser_enabled) so the dashboard
+    # can offer browser-side mic capture + playback.
+    browser_audio: bool = False
 
 
 def _now_iso() -> str:
@@ -64,6 +68,7 @@ def create_app(
     inject_text: TextInjector | None = None,
     config_path: Path | None = None,
     llm_model: str | None = None,
+    audio: AudioConfig | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to a live ``event_bus`` and session.
 
@@ -135,6 +140,10 @@ def create_app(
         )
     if config_path is not None:
         app.include_router(create_config_router(config_path=config_path))
+    # Browser-audio bridge (/ws/audio) -- only when explicitly enabled, so the
+    # default local-hardware audio path is untouched.
+    if audio is not None and audio.browser_enabled:
+        app.include_router(create_audio_router(audio))
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

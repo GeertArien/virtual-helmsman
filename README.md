@@ -417,6 +417,9 @@ Four pages:
 - **Monitor** (`/`) — live transcript, ship state, per-turn latency,
   plus a text-command chatbox and a mic on/off toggle. The **mic starts
   paused**, so the chatbox is the default input until the user enables it.
+  With `audio.browser_enabled: true` a **browser-audio** control also appears,
+  capturing the mic and playing audio in the browser (see
+  [`docs/BROWSER_AUDIO.md`](docs/BROWSER_AUDIO.md)).
 - **Documents** (`/documents`) — upload a PDF to the in-backend HITL
   ingestion pipeline, list and delete document chunks in qdrant, and drill
   into a pending review batch at `/documents/<batch_id>` to approve / edit /

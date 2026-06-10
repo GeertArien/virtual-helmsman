@@ -37,6 +37,7 @@ def _session_info(config: AppConfig, session_id: str, started_at: str) -> Sessio
         turn_backend=config.turn_detection.backend,
         simulator_backend=config.simulator.backend,
         llm_model=config.llm.model,
+        browser_audio=config.audio.browser_enabled,
     )
 
 
@@ -60,6 +61,8 @@ async def _maybe_start_api(
         # Default `Model` for /api/review/upload's doc-summary call, so
         # ingestion uses the same model as the helmsman LLM path.
         llm_model=config.llm.model,
+        # Mounts /ws/audio when audio.browser_enabled is true.
+        audio=config.audio,
     )
     server = ApiServer(app, host=config.api.host, port=config.api.port)
     await server.start()
