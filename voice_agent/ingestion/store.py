@@ -100,7 +100,7 @@ class IngestionStore:
             )
 
     def list_pending_batches(self) -> list[dict[str, Any]]:
-        """All pending batches in the REVIEW_API.md shape (newest first).
+        """All pending batches grouped for the review UI (newest first).
 
         Performs the grouping the n8n ``Group by Batch`` node did: one entry
         per batch with its chunks sorted by ``chunk_id``. ``resume_url`` is
@@ -191,7 +191,7 @@ class IngestionStore:
         actie: str | None = None,
         since: str | None = None,
     ) -> dict[str, Any]:
-        """Filtered audit entries in the REVIEW_API.md Endpoint-4 shape.
+        """Filtered audit entries for the Audit page's recent-activity feed.
 
         Same clamping rules as the n8n ``Filter & Shape Audit Log`` node:
         limit defaults to 50 and caps at 500, an unparseable ``since`` is

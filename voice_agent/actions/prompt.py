@@ -1,9 +1,8 @@
 """The helmsman system prompt.
 
-Verbatim copy of ``n8n_system_prompt.txt`` at the repo root, which is the
-source of truth for the helmsman LLM contract (shared with the n8n workflow
-described in ``API.md``). If you edit one, mirror the change to the other so
-the LM Studio backend and the n8n backend speak the same action vocabulary.
+:data:`SYSTEM_PROMPT` is the single source of truth for the helmsman LLM
+contract -- the `langgraph` and `openai_compatible` backends both feed it to
+LM Studio so they speak the same action vocabulary.
 
 The schema enforced by :mod:`voice_agent.actions.schema` is derived from the
 "Action types" section below; keep them in step. ``multi_step`` was dropped

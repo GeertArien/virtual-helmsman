@@ -6,8 +6,8 @@ Two routes, both mounted at ``/api/documents``:
 * ``DELETE /api/documents/{id}``  -- delete every chunk whose payload carries
   ``document_id == {id}`` (the field name is configurable).
 
-Uploads are not handled here -- they live under ``/api/review`` because
-ingestion runs through n8n with a human-in-the-loop review step.
+Uploads are not handled here -- they live under ``/api/review``, which runs
+the in-backend ingestion pipeline with a human-in-the-loop review step.
 
 Each route degrades gracefully when its required config field is missing:
 the call returns HTTP 503 with a body that names the exact field to set,
