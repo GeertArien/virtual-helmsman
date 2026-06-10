@@ -261,7 +261,14 @@ llm:
   embedding_model: text-embedding-bge-m3
   retrieval_top_k: 20
   langfuse_enabled: false              # true + LANGFUSE_* keys to trace
+  langfuse_host:                       # blank = Langfuse Cloud; set for a self-hosted instance, e.g. http://localhost:3000
 ```
+
+Langfuse is open-source and free to self-host (Docker/Helm). Point
+`langfuse_host` at your instance and set the `LANGFUSE_PUBLIC_KEY` /
+`LANGFUSE_SECRET_KEY` env vars (names overridable via
+`langfuse_public_key_env` / `langfuse_secret_key_env`); leave `langfuse_host`
+blank to use Langfuse Cloud.
 
 Qdrant and the embedding endpoint are reached over plain HTTP, so no
 `qdrant-client` is added. Full design + node-by-node parity with the n8n
