@@ -452,12 +452,17 @@ def test_build_llm_constructs_service(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_runner(chat_input: str) -> dict:
         return {}
 
-    monkeypatch.setattr(graph_mod, "build_runner", lambda config, client: fake_runner)
-    cfg = SimpleNamespace(timeout_seconds=30.0)
+    monkeypatch.setattr(
+        graph_mod,
+        "build_runner",
+        lambda config, client, audit_writer=None: fake_runner,
+    )
+    cfg = SimpleNamespace(timeout_seconds=30.0, audit_enabled=False)
     svc = build_llm(cfg)
     assert isinstance(svc, LangGraphLLMService)
     # A real httpx client was created and is wired for cleanup.
     assert svc._client is not None
+    assert svc._audit_writer is None  # audit disabled
 
 
 def test_llm_config_langgraph_fields_and_qdrant_headers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -479,3 +484,110 @@ def test_llm_config_langgraph_fields_and_qdrant_headers(monkeypatch: pytest.Monk
     assert cfg.resolved_qdrant_headers() == {}
     monkeypatch.setenv("QDRANT_API_KEY", "secret")
     assert cfg.resolved_qdrant_headers() == {"api-key": "secret"}
+
+
+# ---------- runtime audit rows ------------------------------------------------
+
+
+def test_command_audit_row() -> None:
+    envelope = {
+        "action": {"type": "rudder", "direction": "starboard", "degrees": 20},
+        "response": "Starboard twenty, aye.",
+    }
+    doc, actie, resultaat = helpers.command_audit_row(envelope)
+    assert doc == "n.v.t. (command)"
+    assert actie == "command_runtime"
+    assert resultaat == "action_type=rudder | output=Starboard twenty, aye."
+
+
+def test_question_audit_row() -> None:
+    parsed = {
+        "source_chunk": {"filename": "COLREGS.pdf"},
+        "source_chunk_id": "chunk_026",
+        "citation_reliable": True,
+        "parse_failure": False,
+    }
+    doc, actie, resultaat = helpers.question_audit_row(parsed, "Give way.\n\nSource: …")
+    assert doc == "COLREGS.pdf"
+    assert actie == "question_runtime"
+    assert "chunk=chunk_026" in resultaat
+    assert "citation_reliable=true" in resultaat
+    assert "parse_failure=false" in resultaat
+
+
+def test_question_audit_row_no_source_uses_nvt() -> None:
+    doc, _, _ = helpers.question_audit_row(
+        {"source_chunk": None, "source_chunk_id": None}, "out"
+    )
+    assert doc == "n.v.t."
+
+
+def test_error_audit_row() -> None:
+    doc, actie, resultaat = helpers.error_audit_row("n8n unreachable: boom")
+    assert actie == "llm_error_runtime"
+    assert resultaat.startswith("error=n8n unreachable")
+
+
+async def test_service_failure_writes_error_audit_row() -> None:
+    rows: list[tuple[str, str, str]] = []
+
+    async def writer(doc: str, actie: str, resultaat: str) -> None:
+        rows.append((doc, actie, resultaat))
+
+    async def runner(chat_input: str) -> dict:
+        raise RuntimeError("qdrant down")
+
+    proc = LangGraphLLMService(runner=runner, audit_writer=writer)
+    await _drive(proc, _context_with_user("come to 270"))
+    assert len(rows) == 1
+    assert rows[0][1] == "llm_error_runtime"
+    assert "qdrant down" in rows[0][2]
+
+
+async def test_service_audit_write_failure_does_not_break_turn() -> None:
+    async def writer(doc: str, actie: str, resultaat: str) -> None:
+        raise RuntimeError("audit db locked")
+
+    async def runner(chat_input: str) -> dict:
+        raise RuntimeError("boom")
+
+    proc = LangGraphLLMService(runner=runner, audit_writer=writer)
+    # Even though both the turn and the audit write fail, a parseable error
+    # envelope still reaches the pipeline.
+    pushed = await _drive(proc, _context_with_user("come to 270"))
+    parsed = parse_response(next(f for f in pushed if isinstance(f, LLMTextFrame)).text)
+    assert parsed.action.type == "error"
+
+
+def test_build_llm_wires_audit_writer(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """audit_enabled -> a writer backed by the shared store is created and
+    passed to both the graph runner and the service."""
+    from voice_agent.backends.llm.langgraph_helmsman import graph as graph_mod
+
+    captured: dict[str, Any] = {}
+
+    async def fake_runner(chat_input: str) -> dict:
+        return {}
+
+    def fake_build_runner(config: Any, client: Any, audit_writer: Any = None) -> Any:
+        captured["audit_writer"] = audit_writer
+        return fake_runner
+
+    monkeypatch.setattr(graph_mod, "build_runner", fake_build_runner)
+    cfg = SimpleNamespace(
+        timeout_seconds=30.0,
+        audit_enabled=True,
+        audit_db_path=str(tmp_path / "audit.db"),
+    )
+    svc = build_llm(cfg)
+    assert svc._audit_writer is not None
+    assert captured["audit_writer"] is svc._audit_writer
+
+    # The writer actually inserts into the shared audit store.
+    import asyncio
+
+    from voice_agent.ingestion.store import IngestionStore
+
+    asyncio.run(svc._audit_writer("n.v.t. (command)", "command_runtime", "ok"))
+    out = IngestionStore(cfg.audit_db_path).query_audit(actie="command_runtime")
+    assert out["total_returned"] == 1

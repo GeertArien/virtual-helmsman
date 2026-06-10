@@ -1,3 +1,9 @@
+> **Historical (n8n) — superseded.** The HITL ingestion no longer runs on
+> n8n; it runs in-backend ([`LOCAL_INGESTION.md`](LOCAL_INGESTION.md)), and the
+> frontend talks to the `/api/review/*` routes rather than n8n webhooks
+> directly. This document is retained as the behavioural spec the in-backend
+> pipeline reproduces (upload → pending → resume → audit, field shapes).
+
 # Chunk Review API — HTTP contract for the Helmsman HITL webapp
 
 This document is the **contract between the n8n ingestion pipeline and the webapp

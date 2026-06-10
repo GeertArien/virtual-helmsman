@@ -1,43 +1,44 @@
-"""HTTP endpoints for the HITL chunk-review flow.
+"""HTTP endpoints for the in-backend HITL chunk-review flow.
 
-Four routes mounted at ``/api/review``:
+Five routes mounted at ``/api/review``, backed by the in-process
+:class:`~voice_agent.ingestion.engine.IngestionEngine` (the local replacement
+for the n8n ingestion + ``webapp_api`` workflows; contract in
+``REVIEW_API.md``):
 
-* ``POST /api/review/upload``                 -- forward multipart to
-  ``<n8n>/webhook/review/upload``; returns n8n's 202 body unchanged.
-* ``GET  /api/review/pending``                -- pass through
-  ``<n8n>/webhook/review/pending`` with each batch's ``resume_url`` stripped
-  (the frontend never sees the n8n callback URL).
-* ``POST /api/review/{batch_id}/resume``      -- look up the batch's
-  ``resume_url`` by re-fetching the pending list, then forward the decisions
-  JSON to it. Returns 404 if the batch is no longer pending (someone else
-  already submitted, or the workflow timed out).
-* ``GET  /api/review/audit-log``              -- pass through
-  ``<n8n>/webhook/audit-log`` with the ``limit`` / ``actie`` / ``since`` query
-  params forwarded verbatim. Surfaces ingestion outcomes for the UI's
-  recent-activity feed.
-* ``POST /api/review/audit-event``            -- write one UI-side audit row
-  to ``<n8n>/webhook/audit-event`` (e.g. the AI Act Art. 50 transparency
-  acknowledgement). Best-effort: the frontend fires it and ignores the result.
+* ``POST /api/review/upload``            -- accept a PDF, return 202, and run
+  the ingest (extract -> clean -> summary -> chunk -> pending batch) in the
+  background.
+* ``GET  /api/review/pending``           -- batches awaiting review, read from
+  the local SQLite store (no ``resume_url``: local mode resumes by batch_id).
+* ``POST /api/review/{batch_id}/resume`` -- apply the reviewer's decisions and
+  finalize (embed + upsert to Qdrant). 404 once the batch has been resumed.
+* ``GET  /api/review/audit-log``         -- filtered audit entries (ingestion
+  outcomes + runtime helmsman activity) for the UI's recent-activity feed.
+* ``POST /api/review/audit-event``       -- write one UI-side audit row (e.g.
+  the AI Act Art. 50 transparency acknowledgement).
 
-Each endpoint returns HTTP 503 with a "configure review.<field>" message
-until ``ReviewConfig.n8n_base_url`` is set.
+Write endpoints return HTTP 503 with a "configure review.<field>" message
+until ``qdrant_url`` and ``llm_base_url`` are set; the read endpoints work
+immediately.
 """
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from voice_agent.config import ReviewConfig
+from voice_agent.ingestion.engine import IngestionEngine
 from voice_agent.logging_setup import get_logger
 
 
 class AuditEventRequest(BaseModel):
-    """One UI-side audit row. Mirrors the ``POST /webhook/audit-event`` contract
-    in ``REVIEW_API.md``: three required strings, each bounded to 500 chars.
+    """One UI-side audit row. Mirrors the ``POST /audit-event`` contract in
+    ``REVIEW_API.md``: three required strings, each bounded to 500 chars.
 
     The semantics of each field are chosen by the caller; for the Art. 50
     transparency gate the frontend sends ``actie="art50_acknowledged"``,
@@ -60,94 +61,37 @@ def _missing(field: str) -> HTTPException:
     )
 
 
-def _strip_resume_url(batch: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy of one batch with ``resume_url`` removed.
-
-    Browser code never needs the n8n callback URL -- it submits to
-    ``/api/review/{batch_id}/resume`` and the backend rebinds the call to
-    the right resume URL at submit time.
-    """
-    return {k: v for k, v in batch.items() if k != "resume_url"}
-
-
-async def _fetch_pending(
-    client: httpx.AsyncClient, cfg: ReviewConfig
-) -> dict[str, Any]:
-    """GET <n8n>/webhook/review/pending and return the parsed JSON body.
-
-    n8n quirk: when the underlying datatable is empty, the workflow ends
-    with no item to return and the webhook responds 500 with the body
-    ``{"code":0,"message":"No item to return was found"}``. The contract
-    says the empty case should return ``{total_pending_batches:0, batches:[]}``
-    instead -- mapping it here keeps the frontend tolerant. Fix the n8n
-    workflow (e.g. add an "always emit a stub item" branch) to remove the
-    workaround.
-    """
-    assert cfg.n8n_base_url is not None
-    log = get_logger("api.review")
-    url = cfg.n8n_base_url.rstrip("/") + cfg.pending_path
-    try:
-        res = await client.get(url, headers=cfg.resolved_n8n_headers() or None)
-    except httpx.RequestError as exc:
-        raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
-
-    parsed: Any
-    try:
-        parsed = res.json()
-    except ValueError:
-        parsed = None
-
-    if res.status_code >= 400:
-        if (
-            res.status_code == 500
-            and isinstance(parsed, dict)
-            and parsed.get("message") == "No item to return was found"
-        ):
-            log.warning(
-                "n8n_pending_empty_500",
-                hint=(
-                    "n8n's pending-review workflow returned 500 for an empty "
-                    "queue; treating as []. Patch the workflow to return "
-                    "{total_pending_batches:0, batches:[]} per the contract."
-                ),
-            )
-            return {"total_pending_batches": 0, "batches": []}
-        detail: Any = parsed if parsed is not None else res.text
-        raise HTTPException(
-            status_code=502,
-            detail={"upstream_status": res.status_code, "n8n": detail},
-        )
-
-    if parsed is None:
-        raise HTTPException(
-            status_code=502, detail="n8n returned non-JSON for pending list."
-        )
-    return parsed
-
-
 def create_review_router(
-    cfg: ReviewConfig, *, llm_model: str | None = None
+    cfg: ReviewConfig,
+    *,
+    llm_model: str | None = None,
+    engine: IngestionEngine | None = None,
 ) -> APIRouter:
     """Build the /api/review router bound to a :class:`ReviewConfig`.
 
-    The router holds a long-lived :class:`httpx.AsyncClient` exposed via
-    the private ``_http_client`` attribute so :func:`create_app`'s lifespan
-    handler can close it at shutdown.
+    ``llm_model`` is the LM Studio chat-model identifier used as the default
+    for the doc-summary call (threaded from ``LlmConfig.model`` so ingestion
+    uses the same model as the helmsman LLM path); a per-request ``Model`` form
+    field still wins. ``engine`` is injectable for tests; by default one is
+    constructed from the config.
 
-    ``llm_model`` is the LM Studio chat-model identifier used as the
-    default ``Model`` form field on uploads (per ``REVIEW_API.md``). It
-    is normally threaded from ``LlmConfig.model`` so the doc-summary call
-    inside the ingestion pipeline uses the same model the rest of the
-    helmsman LLM path does. Per-request overrides via the ``Model`` form
-    field still win; ``None`` means "let n8n use its own default".
+    The engine is exposed as ``router._http_client`` so
+    :func:`~voice_agent.api.app.create_app`'s lifespan handler closes it at
+    shutdown through the same ``aclose()`` duck type it uses for httpx clients.
     """
     router = APIRouter(prefix="/api/review", tags=["review"])
     log = get_logger("api.review")
-    client = httpx.AsyncClient(timeout=cfg.request_timeout_seconds)
-    router._http_client = client  # type: ignore[attr-defined]
+    eng = engine or IngestionEngine(cfg, default_model=llm_model)
+    router._http_client = eng  # type: ignore[attr-defined]
+
+    def _require_local_fields() -> None:
+        if not cfg.qdrant_url:
+            raise _missing("qdrant_url")
+        if not cfg.llm_base_url:
+            raise _missing("llm_base_url")
 
     # ---- UPLOAD --------------------------------------------------------
-    @router.post("/upload")
+    @router.post("/upload", status_code=202)
     async def upload(
         file: UploadFile = File(...),
         Document_Type: str = Form(default=""),
@@ -156,281 +100,90 @@ def create_review_router(
         Chunking_Strategy: str | None = Form(default=None),
         Model: str | None = Form(default=None),
     ) -> dict[str, Any]:
-        if not cfg.n8n_base_url:
-            raise _missing("n8n_base_url")
-
-        # The webhook treats Document_Type and Collection_Name as required.
-        # When the form omits them we fall back to the configured defaults
-        # rather than passing through empty strings -- empty values would
-        # silently produce chunks with no document_type / wrong collection.
-        document_type = Document_Type or cfg.default_document_type
-        collection_name = Collection_Name or cfg.default_collection_name
-        categories = Categories if Categories is not None else cfg.default_categories
-        chunking_strategy = (
-            Chunking_Strategy
-            if Chunking_Strategy is not None
-            else cfg.default_chunking_strategy
-        )
-        # Model precedence: explicit per-request override > configured
-        # llm.model > omit (n8n falls back to its own default). Empty
-        # string from the form is treated as "use the configured one"
-        # rather than as an explicit empty override.
-        model = Model or llm_model
-
+        _require_local_fields()
         content = await file.read()
-        # n8n takes the first binary part regardless of name; we use "pdf"
-        # for legibility in the n8n execution view.
-        files = {
-            "pdf": (
-                file.filename or "upload.pdf",
-                content,
-                file.content_type or "application/pdf",
-            )
-        }
-        data: dict[str, str] = {
-            "Document_Type": document_type,
-            "Collection_Name": collection_name,
-            "Categories": categories,
-            "Chunking_Strategy": chunking_strategy,
-        }
-        if model is not None:
-            data["Model"] = model
+        if not content:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
-        url = cfg.n8n_base_url.rstrip("/") + cfg.upload_path
-        try:
-            res = await client.post(
-                url, files=files, data=data, headers=cfg.resolved_n8n_headers() or None
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
-
-        if res.status_code >= 400:
-            try:
-                detail = res.json()
-            except ValueError:
-                detail = res.text
-            raise HTTPException(
-                status_code=502,
-                detail={"upstream_status": res.status_code, "n8n": detail},
-            )
-
-        try:
-            body = res.json()
-        except ValueError:
-            body = {}
+        eng.start_ingest(
+            content=content,
+            filename=file.filename or "upload.pdf",
+            document_type=Document_Type or cfg.default_document_type,
+            collection_name=Collection_Name or cfg.default_collection_name,
+            categories=Categories if Categories is not None else cfg.default_categories,
+            chunking_strategy=(
+                Chunking_Strategy
+                if Chunking_Strategy is not None
+                else cfg.default_chunking_strategy
+            ),
+            model=Model or None,
+        )
         log.info(
-            "review_upload_forwarded",
+            "review_upload_accepted",
             filename=file.filename,
             size_bytes=len(content),
-            collection_name=collection_name,
-            document_type=document_type,
-            chunking_strategy=chunking_strategy,
-            model=model,
-            n8n_status=res.status_code,
         )
-        # Surface the same shape n8n returned, with a safe default if the
-        # workflow ever drops the message field.
         return {
-            "status": body.get("status", "queued"),
-            "message": body.get(
-                "message",
-                "PDF received. Poll /api/review/pending for the chunk-review batch.",
-            ),
+            "status": "queued",
+            "message": "PDF received. Poll /api/review/pending for the chunk-review batch.",
         }
 
     # ---- PENDING -------------------------------------------------------
     @router.get("/pending")
     async def pending() -> dict[str, Any]:
-        if not cfg.n8n_base_url:
-            raise _missing("n8n_base_url")
-        body = await _fetch_pending(client, cfg)
-        # Strip resume_url from each batch -- browsers see only batch_id.
-        raw_batches = body.get("batches") or []
-        batches = [_strip_resume_url(b) for b in raw_batches]
-        return {
-            "total_pending_batches": body.get("total_pending_batches", len(batches)),
-            "batches": batches,
-        }
+        batches = await asyncio.to_thread(eng.store.list_pending_batches)
+        return {"total_pending_batches": len(batches), "batches": batches}
 
     # ---- RESUME --------------------------------------------------------
     @router.post("/{batch_id}/resume")
-    async def resume(batch_id: str, request: Request) -> Any:
-        if not cfg.n8n_base_url:
-            raise _missing("n8n_base_url")
-
-        # Look up the resume URL by re-fetching pending. This costs one extra
-        # GET per submit but the list is small and the call is cheap; the
-        # alternative is to cache the mapping in memory and invalidate on
-        # successful submit, which adds state without buying much.
-        body = await _fetch_pending(client, cfg)
-        match: dict[str, Any] | None = None
-        for batch in body.get("batches") or []:
-            if batch.get("batch_id") == batch_id:
-                match = batch
-                break
-        if match is None:
-            # Batch isn't pending anymore -- either already submitted or the
-            # workflow timed out. Frontend should refresh its list.
+    async def resume(batch_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        _require_local_fields()
+        decisions = body.get("decisions")
+        if not isinstance(decisions, list):
+            raise HTTPException(
+                status_code=400,
+                detail='resume body must contain a "decisions" array.',
+            )
+        try:
+            outcome = await eng.resume(batch_id, decisions)
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=502, detail=f"ingestion finalize failed: {exc}"
+            ) from exc
+        if outcome is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"batch_id {batch_id!r} is no longer pending review.",
             )
-        resume_url = match.get("resume_url")
-        if not resume_url:
-            # Should never happen given the contract, but keep the failure
-            # visible rather than POSTing to None.
-            raise HTTPException(
-                status_code=502,
-                detail=f"n8n returned no resume_url for batch {batch_id!r}.",
-            )
-
-        # Forward the decisions JSON body verbatim. The frontend is expected
-        # to send {"batch_id": ..., "decisions": [...]} per the contract; we
-        # don't reshape it -- n8n is the schema authority.
-        try:
-            decisions_body = await request.json()
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400, detail=f"resume body must be JSON: {exc}"
-            ) from exc
-
-        try:
-            res = await client.post(
-                resume_url, json=decisions_body, headers=cfg.resolved_n8n_headers() or None
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
-
-        if res.status_code == 404 or res.status_code == 410:
-            # n8n's wait URL is one-shot. A 404/410 means somebody else
-            # already resumed the workflow -- present this as a stale batch
-            # to the caller so the UI refreshes.
-            raise HTTPException(
-                status_code=404,
-                detail=f"batch_id {batch_id!r} resume URL has already been used.",
-            )
-        if res.status_code >= 400:
-            try:
-                detail = res.json()
-            except ValueError:
-                detail = res.text
-            raise HTTPException(
-                status_code=502,
-                detail={"upstream_status": res.status_code, "n8n": detail},
-            )
-
-        log.info(
-            "review_decisions_submitted",
-            batch_id=batch_id,
-            n8n_status=res.status_code,
-        )
-        # n8n's resume response is the last-node output (verbose qdrant
-        # upsert in v1). Frontend just checks 2xx and refreshes the list,
-        # but we surface the raw body for diagnostics.
-        try:
-            return {"status": "ok", "n8n": res.json()}
-        except ValueError:
-            return {"status": "ok", "n8n": {"raw": res.text}}
+        return outcome
 
     # ---- AUDIT LOG -----------------------------------------------------
     @router.get("/audit-log")
     async def audit_log(
-        limit: int | None = Query(default=None, ge=1, le=500),
-        actie: str | None = Query(default=None),
-        since: str | None = Query(default=None),
+        limit: int | None = None,
+        actie: str | None = None,
+        since: str | None = None,
     ) -> dict[str, Any]:
-        """Forward to ``<n8n>/webhook/audit-log``.
-
-        n8n already validates/clamps the three query params (limit is capped
-        at 500, bad ``since`` falls back to no-filter), so we just pass them
-        through. Returning the body verbatim keeps the contract honest --
-        the frontend renders ``entries[].actie`` / ``resultaat`` directly.
-        """
-        if not cfg.n8n_base_url:
-            raise _missing("n8n_base_url")
-
-        params: dict[str, str] = {}
-        if limit is not None:
-            params["limit"] = str(limit)
-        if actie:
-            params["actie"] = actie
-        if since:
-            params["since"] = since
-
-        url = cfg.n8n_base_url.rstrip("/") + cfg.audit_log_path
-        try:
-            res = await client.get(
-                url, params=params or None, headers=cfg.resolved_n8n_headers() or None
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
-
-        if res.status_code >= 400:
-            try:
-                detail = res.json()
-            except ValueError:
-                detail = res.text
-            raise HTTPException(
-                status_code=502,
-                detail={"upstream_status": res.status_code, "n8n": detail},
-            )
-
-        try:
-            body = res.json()
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=502, detail=f"n8n returned non-JSON for audit-log: {exc}"
-            ) from exc
-        if not isinstance(body, dict):
-            raise HTTPException(
-                status_code=502,
-                detail="n8n returned a non-object body for audit-log.",
-            )
-        return body
+        return await asyncio.to_thread(
+            eng.store.query_audit, limit=limit, actie=actie, since=since
+        )
 
     # ---- AUDIT EVENT (write) -------------------------------------------
     @router.post("/audit-event")
     async def audit_event(event: AuditEventRequest) -> dict[str, Any]:
-        """Forward one audit row to ``<n8n>/webhook/audit-event``.
-
-        The write counterpart to ``/audit-log``. The frontend treats this as
-        fire-and-forget (acknowledgement must succeed even when n8n is down),
-        so the only meaningful effect is the row insert; we still surface
-        upstream failures as 502 for callers that do want to observe them.
-        """
-        if not cfg.n8n_base_url:
-            raise _missing("n8n_base_url")
-
-        url = cfg.n8n_base_url.rstrip("/") + cfg.audit_event_path
-        try:
-            res = await client.post(
-                url, json=event.model_dump(), headers=cfg.resolved_n8n_headers() or None
-            )
-        except httpx.RequestError as exc:
-            raise HTTPException(status_code=502, detail=f"n8n unreachable: {exc}") from exc
-
-        if res.status_code >= 400:
-            try:
-                detail = res.json()
-            except ValueError:
-                detail = res.text
-            raise HTTPException(
-                status_code=502,
-                detail={"upstream_status": res.status_code, "n8n": detail},
-            )
-
-        log.info(
-            "audit_event_forwarded",
-            actie=event.actie,
-            document_naam=event.document_naam,
-            n8n_status=res.status_code,
+        row = await asyncio.to_thread(
+            eng.store.insert_audit,
+            event.document_naam,
+            event.actie,
+            event.resultaat,
         )
-        # n8n echoes {status, id, createdAt, ...}; pass it through. Fall back
-        # to a minimal ack if the workflow ever returns a non-object body.
-        try:
-            body = res.json()
-        except ValueError:
-            body = None
-        return body if isinstance(body, dict) else {"status": "logged"}
+        log.info("audit_event_logged", actie=event.actie, id=row["id"])
+        return {
+            "status": "logged",
+            "id": row["id"],
+            "createdAt": row["createdAt"],
+            "document_naam": row["document_naam"],
+            "actie": row["actie"],
+        }
 
     return router
