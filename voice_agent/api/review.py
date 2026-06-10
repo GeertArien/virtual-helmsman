@@ -130,6 +130,10 @@ def create_review_router(
 ) -> APIRouter:
     """Build the /api/review router bound to a :class:`ReviewConfig`.
 
+    Dispatches on ``cfg.backend``: ``local`` mounts the in-backend ingestion
+    routes (:mod:`voice_agent.api.review_local`); ``n8n`` (default) mounts
+    the proxy below. Both serve the same routes and shapes.
+
     The router holds a long-lived :class:`httpx.AsyncClient` exposed via
     the private ``_http_client`` attribute so :func:`create_app`'s lifespan
     handler can close it at shutdown.
@@ -141,6 +145,13 @@ def create_review_router(
     helmsman LLM path does. Per-request overrides via the ``Model`` form
     field still win; ``None`` means "let n8n use its own default".
     """
+    if cfg.backend == "local":
+        # Imported here to keep the local pipeline (and its optional deps)
+        # out of the n8n-proxy path entirely.
+        from voice_agent.api.review_local import create_local_review_router
+
+        return create_local_review_router(cfg, llm_model=llm_model)
+
     router = APIRouter(prefix="/api/review", tags=["review"])
     log = get_logger("api.review")
     client = httpx.AsyncClient(timeout=cfg.request_timeout_seconds)

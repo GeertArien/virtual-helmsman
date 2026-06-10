@@ -249,22 +249,29 @@ class DocumentsConfig(_Base):
 
 
 class ReviewConfig(_Base):
-    """HITL chunk-review proxy in front of n8n.
+    """HITL chunk-review: n8n proxy or the in-backend local pipeline.
 
-    The Python backend proxies three n8n routes at ``<base_url>/webhook/...``:
+    Two backends, selected by ``backend``:
 
-    * ``POST /webhook/review/upload``      -- multipart, starts ingestion.
-    * ``GET  /webhook/review/pending``     -- batches awaiting review.
-    * ``POST <resume_url>``                -- one-shot per batch.
+    * ``n8n`` *(default)* -- proxy the n8n webhooks at
+      ``<n8n_base_url>/webhook/...``. The frontend never sees the per-batch
+      ``resume_url``: the backend keeps that mapping server-side and exposes
+      ``/api/review/{batch_id}/resume`` instead.
+    * ``local`` -- run the ingestion pipeline in this process (LangChain
+      doc-summary + optional Langfuse tracing, local SQLite for the pending
+      batches and the audit log, direct Qdrant upserts). Same five
+      ``/api/review/*`` routes and shapes, so the frontend needs no changes.
+      Requires the ``langgraph`` pip extra. See ``docs/LOCAL_INGESTION.md``.
 
-    The frontend never sees the per-batch ``resume_url``: the backend keeps
-    that mapping server-side and exposes ``/api/review/{batch_id}/resume``
-    instead.
-
-    All fields optional; when ``n8n_base_url`` is unset every endpoint
-    returns HTTP 503 with a clear "configure review.n8n_base_url" message.
+    All fields optional; endpoints return HTTP 503 with a clear
+    "configure review.<field>" message until the fields their backend needs
+    are set (``n8n_base_url`` for n8n; ``qdrant_url`` + ``llm_base_url``
+    for local).
     """
 
+    backend: Literal["n8n", "local"] = "n8n"
+
+    # --- n8n only ---------------------------------------------------------
     # n8n base URL, e.g. "http://127.0.0.1:5678". Routes are appended below.
     n8n_base_url: str | None = None
     # Per-route path suffixes -- override only if n8n is mounted under a
@@ -293,10 +300,39 @@ class ReviewConfig(_Base):
     n8n_auth_header: str = "X-N8N-API-KEY"
     n8n_api_key_env: str = "N8N_API_KEY"
 
+    # --- local only ---------------------------------------------------------
+    # SQLite file holding the pending-review batches and the audit log. The
+    # pending table IS the HITL pause state -- batches survive restarts.
+    db_path: str = "./data/ingestion.db"
+    # LM Studio /v1 root for the doc-summary chat call and the bge-m3
+    # embeddings (same server the LLM backends use).
+    llm_base_url: str | None = None
+    llm_api_key_env: str = "LLM_API_KEY"
+    # Qdrant REST root for collection management + upserts.
+    qdrant_url: str | None = None
+    qdrant_api_key_env: str = "QDRANT_API_KEY"
+    # Dense embedding model; pinned to the collection's 1024-dim vector.
+    embedding_model: str = "text-embedding-bge-m3"
+    # Optional Langfuse tracing of the doc-summary call. Field names mirror
+    # LlmConfig so the same handler factory serves both.
+    langfuse_enabled: bool = False
+    langfuse_host: str | None = None
+    langfuse_public_key_env: str = "LANGFUSE_PUBLIC_KEY"
+    langfuse_secret_key_env: str = "LANGFUSE_SECRET_KEY"
+
     def resolved_n8n_headers(self) -> dict[str, str]:
         """Auth header for outbound n8n webhook calls, or ``{}`` if no key set."""
         key = os.environ.get(self.n8n_api_key_env)
         return {self.n8n_auth_header: key} if key else {}
+
+    def resolved_llm_api_key(self) -> str | None:
+        """LM Studio API key for the local pipeline, or ``None`` if unset."""
+        return os.environ.get(self.llm_api_key_env)
+
+    def resolved_qdrant_headers(self) -> dict[str, str]:
+        """``api-key`` header for Qdrant (local pipeline), or ``{}`` if no key set."""
+        key = os.environ.get(self.qdrant_api_key_env)
+        return {"api-key": key} if key else {}
 
 
 class AppConfig(_Base):

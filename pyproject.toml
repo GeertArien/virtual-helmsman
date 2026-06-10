@@ -64,6 +64,9 @@ langgraph = [
     "langchain-core>=0.3.0,<1.0",
     "langchain-openai>=0.2.0,<1.0",
     "langfuse>=2.0",
+    # PDF text extraction for the local HITL ingestion pipeline
+    # (review.backend: local). See docs/LOCAL_INGESTION.md.
+    "pypdf>=5.0",
 ]
 # CUDA 12.x runtime + cuDNN 9.x for onnxruntime-gpu, as venv-local pip wheels
 # (no system-wide CUDA toolkit). Required on the NVIDIA client; the DLLs are

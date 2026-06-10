@@ -273,6 +273,10 @@ blank to use Langfuse Cloud.
 Qdrant and the embedding endpoint are reached over plain HTTP, so no
 `qdrant-client` is added. Full design + node-by-node parity with the n8n
 runtime workflow: [`docs/LANGGRAPH_BACKEND.md`](docs/LANGGRAPH_BACKEND.md).
+The companion `review.backend: local` setting moves the document-ingestion +
+HITL review side in-backend too ([`docs/LOCAL_INGESTION.md`](docs/LOCAL_INGESTION.md));
+together they remove the n8n dependency entirely
+(`config.examples/config.langgraph.yaml` enables both).
 
 ### `openai_compatible`
 
@@ -449,6 +453,12 @@ review:
   n8n_base_url: http://127.0.0.1:5678
   # upload_path / pending_path / audit_log_path / audit_event_path default to /webhook/...
 ```
+
+The review block can alternatively run **without n8n**: set
+`review.backend: local` to use the in-backend ingestion pipeline (LangChain
+doc-summary, local SQLite for pending batches + audit log, direct Qdrant
+upserts — requires the `langgraph` extra). Same routes and shapes, so the
+frontend doesn't change. See [`docs/LOCAL_INGESTION.md`](docs/LOCAL_INGESTION.md).
 
 Each `documents.*` and `review.*` field is optional — endpoints return
 HTTP 503 with a "configure `<field>`" message until you set them, so the

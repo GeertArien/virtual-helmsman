@@ -20,6 +20,8 @@ build/
 
 # Logs and runtime output
 logs/
+# Local ingestion DB (pending review batches + audit log; review.backend: local)
+data/
 
 # Test / type / lint caches
 .pytest_cache/

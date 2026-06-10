@@ -1,11 +1,14 @@
-# Example: in-backend LangGraph helmsman (no n8n).
+# Example: fully in-backend helmsman (no n8n at all).
 #
 # Replaces the n8n runtime workflow with the native `langgraph` LLM backend
 # (intent classify -> command parse / hybrid-RAG with rerank + adjacent-chunk
-# expansion). Requires the optional extra:  pip install -e ".[langgraph]"
+# expansion) AND the n8n ingestion workflow with the local HITL review
+# pipeline (review.backend: local). Requires the optional extra:
+#   pip install -e ".[langgraph]"
 #
-# Differs from the default only in the `llm` block. The LLM + embeddings run on
-# LM Studio's /v1 server; retrieval runs on Qdrant. See docs/LANGGRAPH_BACKEND.md.
+# Differs from the default in the `llm` and `review` blocks. The LLM +
+# embeddings run on LM Studio's /v1 server; retrieval/ingestion run on Qdrant.
+# See docs/LANGGRAPH_BACKEND.md and docs/LOCAL_INGESTION.md.
 
 stt:
   backend: parakeet_onnx
@@ -48,6 +51,23 @@ llm:
   langfuse_host:                       # blank = Langfuse Cloud; or http://localhost:3000
   langfuse_public_key_env: LANGFUSE_PUBLIC_KEY
   langfuse_secret_key_env: LANGFUSE_SECRET_KEY
+
+api:
+  enabled: true
+
+documents:
+  qdrant_url: http://localhost:6333
+  qdrant_collection: maritime_hybrid
+
+review:
+  backend: local                       # in-backend HITL ingestion (no n8n)
+  db_path: ./data/ingestion.db         # pending review batches + audit log
+  llm_base_url: http://localhost:1234/v1   # LM Studio (doc summary + embeddings)
+  llm_api_key_env: LLM_API_KEY
+  qdrant_url: http://localhost:6333
+  qdrant_api_key_env: QDRANT_API_KEY
+  embedding_model: text-embedding-bge-m3
+  langfuse_enabled: false              # true -> trace the doc-summary call
 
 simulator:
   backend: mock
