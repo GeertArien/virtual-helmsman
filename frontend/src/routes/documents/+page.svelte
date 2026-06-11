@@ -8,7 +8,7 @@
   <DeleteDocumentPanel />
   <p class="hint">
     Ingestion outcomes, runtime command parses, and RAG question answers all
-    flow into the n8n audit log. See <a href="/audit">Audit</a> for the live feed.
+    flow into the audit log. See <a href="/audit">Audit</a> for the live feed.
   </p>
 </main>
 

@@ -18,9 +18,9 @@
    *  the audit trail records which text was accepted. */
   const DISCLAIMER_VERSION = '1.0';
 
-  /** Log the Art. 50 acknowledgement to the n8n audit trail. Best-effort and
+  /** Log the Art. 50 acknowledgement to the audit trail. Best-effort and
    *  non-blocking: the gate has already closed by the time this runs, and a
-   *  failure (n8n down, etc.) must never affect the user — so we fire and
+   *  failure (backend down, etc.) must never affect the user — so we fire and
    *  swallow. No PII/identity is sent, per the modal's privacy promise. */
   function onTransparencyAck(): void {
     void logAuditEvent({
