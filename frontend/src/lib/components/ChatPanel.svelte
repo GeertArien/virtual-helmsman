@@ -1,53 +1,20 @@
 <script lang="ts">
-  import { ApiError, sendTextCommand, setMicEnabled } from '$lib/api';
-  import { live } from '$lib/liveState.svelte';
+  import { ApiError, sendTextCommand } from '$lib/api';
 
-  /** Local UI state. The mic-enabled flag lives on $live so every tab
-   *  stays in sync via the WS event stream; this component just renders
-   *  it and offers a toggle button. */
+  /** Typed-command chatbox. Voice input is handled entirely by the
+   *  browser-audio control (BrowserAudioPanel) -- there is no separate
+   *  mic toggle; this panel only sends text. */
   let draft = $state('');
   let sending = $state(false);
-  let togglePending = $state(false);
   let sendError = $state<string | null>(null);
-  let toggleError = $state<string | null>(null);
   let textarea: HTMLTextAreaElement | undefined = $state();
 
-  /** Until /api/control/state returns, micEnabled is null -- treat that
-   *  as "loading" and disable both inputs to avoid racing the snapshot. */
-  const micEnabled = $derived(live.micEnabled);
-  const micUnknown = $derived(micEnabled === null);
-  const chatLocked = $derived(micUnknown || micEnabled === true);
-
-  const canSend = $derived(
-    !chatLocked && !sending && draft.trim().length > 0
-  );
+  const canSend = $derived(!sending && draft.trim().length > 0);
 
   function errText(err: unknown): string {
     if (err instanceof ApiError) return `${err.message} (HTTP ${err.status})`;
     if (err instanceof Error) return err.message;
     return 'Request failed';
-  }
-
-  async function toggleMic() {
-    if (togglePending || micUnknown) return;
-    toggleError = null;
-    togglePending = true;
-    try {
-      // Optimistic feel: send the inverse of what we're showing. The WS
-      // event will overwrite micEnabled regardless, so we don't pre-mutate.
-      const next = !micEnabled;
-      await setMicEnabled(next);
-      // The backend broadcasts the change; the WS handler updates live.
-      // If the focus was on the textarea and we just unlocked it, refocus.
-      if (next === false) {
-        // Give Svelte a tick to render the enabled state.
-        queueMicrotask(() => textarea?.focus());
-      }
-    } catch (err) {
-      toggleError = errText(err);
-    } finally {
-      togglePending = false;
-    }
   }
 
   async function submit(e: Event) {
@@ -77,51 +44,13 @@
 </script>
 
 <section class="panel">
-  <header class="hd">
-    <div class="mic-row">
-      <button
-        type="button"
-        class="toggle"
-        data-on={micEnabled === true}
-        onclick={toggleMic}
-        disabled={togglePending || micUnknown}
-        aria-pressed={micEnabled === true}
-        title={micEnabled === true ? 'Click to disable the server mic' : 'Click to enable the server mic'}
-      >
-        <span class="led" aria-hidden="true"></span>
-        <span class="lbl">
-          {#if micUnknown}
-            mic: unknown
-          {:else if micEnabled}
-            mic: recording
-          {:else}
-            mic: paused
-          {/if}
-        </span>
-      </button>
-      <span class="hint">
-        {#if chatLocked && !micUnknown}
-          Disable the mic to type commands.
-        {:else if !chatLocked}
-          Mic is paused — type commands below.
-        {/if}
-      </span>
-    </div>
-    {#if toggleError}
-      <div class="status err inline">{toggleError}</div>
-    {/if}
-  </header>
-
   <form class="input-row" onsubmit={submit}>
     <textarea
       bind:this={textarea}
       bind:value={draft}
       onkeydown={onKey}
-      placeholder={chatLocked
-        ? 'Mic is recording — type is disabled.'
-        : 'Type a helm command, e.g. "come to two seven zero"'}
+      placeholder={'Type a helm command, e.g. "come to two seven zero"'}
       rows="2"
-      disabled={chatLocked}
       aria-label="Text command"
       data-primary-input
     ></textarea>
@@ -144,59 +73,6 @@
     flex-direction: column;
     gap: 0.5rem;
   }
-  .hd {
-    display: flex;
-    flex-direction: column;
-    gap: 0.35rem;
-  }
-  .mic-row {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-  .toggle {
-    /* Flex-grow inside the .mic-row flex container so the toggle pill
-       stretches across the available row width; the hint text wraps to
-       the next line. (This used to come from a stray over-broad
-       :global(:first-child) selector on the page; now expressed where
-       it actually belongs.) */
-    flex: 1;
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    border: 1px solid var(--border);
-    background: var(--bg-elev-2);
-    border-radius: 999px;
-    padding: 0.25rem 0.7rem 0.25rem 0.55rem;
-    font-size: 0.78rem;
-    color: var(--fg);
-    cursor: pointer;
-    line-height: 1;
-  }
-  .toggle:disabled { opacity: 0.55; cursor: not-allowed; }
-  .toggle[data-on='true']  { border-color: var(--bad);  background: rgba(248, 81, 73, 0.1); }
-  .toggle[data-on='false'] { border-color: var(--good); background: rgba(63, 185, 80, 0.08); }
-  .led {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--fg-muted);
-  }
-  .toggle[data-on='true'] .led {
-    background: var(--bad);
-    box-shadow: 0 0 6px var(--bad);
-    /* gentle pulse so "recording" reads at a glance */
-    animation: blink 1.2s ease-in-out infinite;
-  }
-  .toggle[data-on='false'] .led { background: var(--good); }
-  @keyframes blink {
-    50% { opacity: 0.35; }
-  }
-  .lbl { font-family: ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace; }
-
-  .hint { color: var(--fg-muted); font-size: 0.78rem; }
-
   .input-row {
     display: flex;
     gap: 0.5rem;
@@ -241,5 +117,4 @@
     font-size: 0.78rem;
   }
   .status.err { border-color: var(--bad); background: rgba(248, 81, 73, 0.08); }
-  .status.inline { padding: 0.25rem 0.5rem; font-size: 0.75rem; }
 </style>

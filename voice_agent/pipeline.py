@@ -60,21 +60,26 @@ from voice_agent.metrics import ConversationLogger, LatencyTracker
 
 @dataclass
 class SharedBackends:
-    """The expensive, reusable pieces of the agent, built once at startup.
+    """Per-pipeline service factories plus the truly shared singletons.
 
-    The model-loading backends (VAD, turn detector, STT, TTS) and the LLM, the
-    one simulator, and the API-facing event bus / control state are constructed
-    once and reused across every pipeline assembly. For the default local-audio
-    run that's a single pipeline; for browser (WebRTC) audio it's one pipeline
-    per connection -- so the heavy models load once and are shared rather than
-    reloaded per connect (issue #7, "shared models").
+    Pipecat FrameProcessors are **single-use**: once a pipeline is cancelled
+    (e.g. a browser-audio disconnect) every processor in it sets
+    ``_cancelling`` and silently drops all frames forever -- so service
+    *instances* must never be reused across pipeline assemblies. Instead each
+    assembly calls these factories for fresh instances. The expensive part --
+    the STT model load -- is cached at module level in the backend
+    (see ``parakeet_onnx._MODEL_CACHE``), so a factory call after warm-up is
+    cheap; VAD/turn/TTS/LLM construction is fast (~1s combined).
+
+    The simulator (the one ship), event bus, and control state are genuinely
+    shared singletons.
     """
 
-    vad: Any
-    turn_stop_strategy: Any
-    stt: FrameProcessor
-    tts: FrameProcessor
-    llm: FrameProcessor
+    vad_factory: Callable[[], Any]
+    turn_factory: Callable[[], Any]
+    stt_factory: Callable[[], FrameProcessor]
+    tts_factory: Callable[[], FrameProcessor]
+    llm_factory: Callable[[], FrameProcessor]
     simulator: SimulatorClient
     event_bus: EventBus | None
     control_state: ControlState | None
@@ -186,22 +191,40 @@ def build_context_resetter(context: LLMContext):
 
 
 def build_shared_backends(config: AppConfig, session_id: str) -> SharedBackends:
-    """Build the heavy, reusable backends once (models, LLM, simulator, bus).
+    """Build the per-pipeline service factories and shared singletons.
 
-    These are shared across every :func:`assemble_task` call -- one for local
-    audio, one per WebRTC connection -- so the models load a single time.
+    Every :func:`assemble_task` call -- one for local audio, one per WebRTC
+    connection -- gets fresh service instances from the factories (cancelled
+    Pipecat processors are unusable; see :class:`SharedBackends`). The heavy
+    STT model load is warmed here so the first connection doesn't pay it.
     """
     log = get_logger("pipeline")
 
-    # --- local models ---------------------------------------------------
-    vad = create_vad(config.vad)
-    turn_stop_strategy = create_turn(config.turn_detection)
-    stt = create_stt(config.stt)
-    tts = create_tts(config.tts)
+    # --- per-pipeline service factories ----------------------------------
+    def vad_factory() -> Any:
+        return create_vad(config.vad)
+
+    def turn_factory() -> Any:
+        return create_turn(config.turn_detection)
+
+    def stt_factory() -> FrameProcessor:
+        return create_stt(config.stt)
+
+    def tts_factory() -> FrameProcessor:
+        return create_tts(config.tts)
+
     # LLM backend is chosen by config.llm.backend: openai_compatible (LM Studio
     # + JSON-schema response_format, command-only) or langgraph (in-backend
     # command + RAG questions). Both slot into the same pipeline position.
-    llm = create_llm(config.llm)
+    def llm_factory() -> FrameProcessor:
+        return create_llm(config.llm)
+
+    # Warm the model caches / downloads at startup rather than on the first
+    # connection: the STT factory populates the module-level model cache, the
+    # TTS factory triggers Kokoro's model-file download + provider env setup.
+    # The throwaway service wrappers are cheap.
+    stt_factory()
+    tts_factory()
 
     # --- event bus (frontend observability) -----------------------------
     # Created only when the API is enabled. Processors/observers below take
@@ -230,11 +253,11 @@ def build_shared_backends(config: AppConfig, session_id: str) -> SharedBackends:
         api_enabled=config.api.enabled,
     )
     return SharedBackends(
-        vad=vad,
-        turn_stop_strategy=turn_stop_strategy,
-        stt=stt,
-        tts=tts,
-        llm=llm,
+        vad_factory=vad_factory,
+        turn_factory=turn_factory,
+        stt_factory=stt_factory,
+        tts_factory=tts_factory,
+        llm_factory=llm_factory,
         simulator=simulator,
         event_bus=event_bus,
         control_state=control_state,
@@ -246,6 +269,8 @@ def assemble_task(
     backends: SharedBackends,
     config: AppConfig,
     transport: Any,
+    *,
+    gate_mic: bool = True,
 ) -> tuple[PipelineTask, LLMContext]:
     """Wire the shared backends + a transport into a runnable task.
 
@@ -253,11 +278,23 @@ def assemble_task(
     monitors, single-turn reset) around the shared heavy backends, slotting the
     given ``transport`` at the head and tail. Used for the local-audio pipeline
     and for each per-connection WebRTC pipeline.
+
+    ``gate_mic=False`` omits the :class:`MicGate`: browser-audio pipelines are
+    gated by the connection itself -- the user explicitly connects/disconnects
+    browser audio in the dashboard, so a second server-side mute would only
+    mean a deaf-looking agent. The local-hardware pipeline keeps the gate.
     """
     event_bus = backends.event_bus
     json_action = JsonActionProcessor(
         simulator=backends.simulator, event_bus=event_bus
     )
+
+    # Fresh service instances for this pipeline (see SharedBackends: cancelled
+    # Pipecat processors can never be reused, so nothing audio-facing is
+    # shared between assemblies).
+    stt = backends.stt_factory()
+    tts = backends.tts_factory()
+    llm = backends.llm_factory()
 
     # --- context aggregator (carries VAD + turn detection) --------------
     # No tools are declared: the agent uses JSON structured output, not native
@@ -268,9 +305,9 @@ def assemble_task(
     context_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=backends.vad,
+            vad_analyzer=backends.vad_factory(),
             user_turn_strategies=UserTurnStrategies(
-                stop=[backends.turn_stop_strategy]
+                stop=[backends.turn_factory()]
             ),
             user_mute_strategies=[AlwaysUserMuteStrategy()],
         ),
@@ -291,10 +328,11 @@ def assemble_task(
         observers.append(UserTranscriptObserver(event_bus=event_bus))
 
     # MicGate sits between the transport mic and STT so it can drop inbound
-    # audio frames before they hit the recogniser. Omitted in headless mode.
+    # audio frames before they hit the recogniser. Omitted in headless mode
+    # and in browser-audio pipelines (gate_mic=False).
     mic_gate = (
         MicGate(state=backends.control_state)
-        if backends.control_state is not None
+        if gate_mic and backends.control_state is not None
         else None
     )
 
@@ -306,11 +344,11 @@ def assemble_task(
     if mic_gate is not None:
         pipeline_processors.append(mic_gate)
     pipeline_processors += [
-        backends.stt,
+        stt,
         context_aggregator.user(),
-        backends.llm,
+        llm,
         json_action,
-        backends.tts,
+        tts,
         transport.output(),
         context_aggregator.assistant(),
         conversation_logger,
@@ -321,6 +359,62 @@ def assemble_task(
     # helmsman is silent between commands, and long quiet stretches should not
     # tear the pipeline down.
     task = PipelineTask(pipeline, observers=observers, idle_timeout_secs=None)
+    return task, context
+
+
+def assemble_text_task(
+    backends: SharedBackends,
+    config: AppConfig,
+) -> tuple[PipelineTask, LLMContext]:
+    """Wire a standing text-only pipeline: chatbox commands, no audio at all.
+
+    Browser-audio mode has no single local audio pipeline, but the dashboard
+    chatbox still needs a task to inject typed commands into. This is the
+    same proven shape as ``scripts/smoke.py`` -- user aggregator -> LLM ->
+    JsonActionProcessor -> assistant aggregator -- plus the conversation
+    logger and single-turn reset. No transport, no STT/TTS: the action drives
+    the simulator and the reply surfaces in the transcript panel via the
+    event bus.
+
+    Runs alongside the per-connection WebRTC pipelines against the same
+    simulator and event bus; the per-turn context wipe keeps typed and spoken
+    turns from bleeding into each other. Like every assembly it gets its own
+    LLM service instance from the factory -- this pipeline runs concurrently
+    with the per-connection ones, and a FrameProcessor can only be linked
+    into one pipeline at a time.
+    """
+    event_bus = backends.event_bus
+    json_action = JsonActionProcessor(
+        simulator=backends.simulator, event_bus=event_bus
+    )
+    llm = backends.llm_factory()
+    context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
+    context_aggregator = LLMContextAggregatorPair(context)
+
+    latency_tracker = LatencyTracker(
+        session_id=backends.session_id,
+        metrics_dir=config.logging.metrics_log_path,
+        event_bus=event_bus,
+    )
+    conversation_logger = ConversationLogger(
+        session_id=backends.session_id,
+        conversation_dir=config.logging.conversation_log_path,
+    )
+    single_turn_reset = SingleTurnContextReset(reset=build_context_resetter(context))
+
+    pipeline = Pipeline(
+        [
+            context_aggregator.user(),
+            llm,
+            json_action,
+            context_aggregator.assistant(),
+            conversation_logger,
+            single_turn_reset,
+        ]
+    )
+    task = PipelineTask(
+        pipeline, observers=[latency_tracker], idle_timeout_secs=None
+    )
     return task, context
 
 

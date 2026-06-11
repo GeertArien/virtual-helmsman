@@ -27,6 +27,7 @@ from voice_agent.config import AppConfig, load_config
 from voice_agent.logging_setup import configure_logging, get_logger, new_session_id
 from voice_agent.pipeline import (
     BuiltPipeline,
+    assemble_text_task,
     build_pipeline,
     build_shared_backends,
     build_text_injector,
@@ -54,13 +55,13 @@ async def _maybe_start_api(
     config_path: str,
     *,
     webrtc_manager: WebRTCManager | None = None,
-    enable_text: bool = True,
 ) -> ApiServer | None:
     """Start the FastAPI server alongside the pipeline if configured.
 
     ``webrtc_manager`` mounts the browser-audio (WebRTC) signalling endpoint.
-    ``enable_text`` gates the chatbox text-injection route -- disabled in
-    browser-audio mode, where there is no single local task to inject into.
+    The chatbox text-injection route targets ``built.task`` -- the local-audio
+    pipeline in the default mode, the standing text-only pipeline in
+    browser-audio mode.
     """
     if not config.api.enabled or built.event_bus is None:
         return None
@@ -75,7 +76,7 @@ async def _maybe_start_api(
         control_state=built.control_state,
         inject_text=(
             build_text_injector(built.task, built.llm_context)
-            if enable_text and built.task is not None
+            if built.task is not None
             else None
         ),
         config_path=Path(config_path),
@@ -131,9 +132,10 @@ async def _run_browser(
     """Browser-audio path: serve the API and run a pipeline per WebRTC connection.
 
     The heavy models are loaded once into shared backends; each browser
-    connection assembles its own pipeline against them. There is no local
-    hardware audio and no single global task -- the process just serves until
-    interrupted.
+    connection assembles its own pipeline against them. Voice flows through
+    those per-connection pipelines (the dashboard's browser-audio control is
+    the mic on/off); typed chatbox commands flow through a **standing
+    text-only pipeline** that runs for the whole session.
     """
     backends = build_shared_backends(config, session_id)
     manager = WebRTCManager(backends, config)
@@ -142,23 +144,26 @@ async def _run_browser(
             "webrtc_extra_missing",
             hint='Browser audio needs the webrtc extra: pip install -e ".[webrtc]"',
         )
-    # No local task: pass a BuiltPipeline carrying the shared resources but a
-    # ``None`` task so the API mounts without a text-injector.
+    # Standing text-only pipeline: the chatbox injects into this task; the
+    # reply surfaces in the transcript panel and the action drives the
+    # shared simulator.
+    text_task, text_context = assemble_text_task(backends, config)
     shell = BuiltPipeline(
-        task=None,  # type: ignore[arg-type]
+        task=text_task,
         simulator=backends.simulator,
         session_id=session_id,
         event_bus=backends.event_bus,
         control_state=backends.control_state,
-        llm_context=None,  # type: ignore[arg-type]
+        llm_context=text_context,
         backends=backends,
     )
-    api = await _maybe_start_api(
-        config, shell, config_path, webrtc_manager=manager, enable_text=False
-    )
+    api = await _maybe_start_api(config, shell, config_path, webrtc_manager=manager)
     log.info("browser_audio_ready", host=config.api.host, port=config.api.port)
+    runner = PipelineRunner(handle_sigint=True)
     try:
-        await asyncio.Event().wait()  # serve until SIGINT / cancellation
+        # The text task idles between typed commands (idle timeout disabled)
+        # and serves until SIGINT, replacing the previous bare Event().wait().
+        await runner.run(text_task)
     finally:
         if api is not None:
             await api.stop()

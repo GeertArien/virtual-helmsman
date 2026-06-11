@@ -42,9 +42,12 @@ export class WebRTCAudio {
       const pc = new RTCPeerConnection();
       this.pc = pc;
 
-      // Send the mic; ask to receive the agent's audio.
+      // Send the mic and receive the agent's audio over one transceiver:
+      // addTrack() creates a sendrecv audio transceiver. Do NOT add a second
+      // audio transceiver -- Pipecat's SmallWebRTCConnection switches its
+      // input to the newest audio track it sees, and an extra trackless
+      // m-line leaves the agent reading a track that never carries RTP.
       for (const track of this.stream.getAudioTracks()) pc.addTrack(track, this.stream);
-      pc.addTransceiver('audio', { direction: 'sendrecv' });
 
       // Play the inbound agent track.
       this.audioEl = new Audio();

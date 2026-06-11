@@ -25,19 +25,29 @@ The browser plays the inbound agent audio track; the action still drives the
 simulator and publishes the usual transcript / ship-state / metrics events over
 `/ws/events`.
 
-### Shared models, per-connection pipelines
+### Shared models, per-connection services
 
-The heavy backends — VAD, turn detector, STT, TTS, the LLM, and the one
-simulator — are built **once at startup** into a `SharedBackends`. Each browser
-connection assembles its own pipeline (`assemble_task`) bound to that
-connection's WebRTC transport, reusing the already-loaded models rather than
-reloading them per connect. In browser mode the process has no single local
-task; it serves the API and runs one pipeline per live connection.
+Pipecat FrameProcessors are **single-use**: once a pipeline is cancelled (a
+browser disconnect) every processor in it permanently drops frames. So
+`SharedBackends` holds per-pipeline service *factories*, not instances — each
+connection assembles a fresh pipeline (`assemble_task`) with fresh
+STT/TTS/LLM/VAD/turn services bound to that connection's WebRTC transport.
+What *is* shared across connections: the loaded STT model (cached at module
+level in `parakeet_onnx`, warmed at startup), the one simulator, and the
+event bus. Reconnect cost is ~1 s of service construction, not a model
+reload. In browser mode the process serves the API, runs one pipeline per
+live connection, plus a standing text-only pipeline for the chatbox.
 
-The existing **server-mic toggle** (`/api/control/mic`) still gates audio: it's
-wired into every assembled pipeline as the `MicGate`, so it mutes browser audio
-too. The text chatbox is disabled in browser mode (there's no single local task
-to inject into) — voice is the input.
+The **browser-audio control is the mic on/off**: connecting grants the agent
+your audio, disconnecting cuts it. Browser pipelines carry no `MicGate`
+(`assemble_task(..., gate_mic=False)`) — a second server-side mute on top of
+an explicit connect would only look like a deaf agent. The server-mic toggle
+UI is gone; `/api/control/mic` remains for the local-hardware mode only.
+
+The **text chatbox still works** in browser mode: typed commands flow through
+a standing text-only pipeline (user aggregator → LLM → JSON action →
+assistant aggregator, no audio) that runs for the whole session against the
+same simulator and event bus. Replies surface in the transcript panel.
 
 ### Enable it
 
@@ -82,5 +92,3 @@ can't be exercised in headless CI. Known follow-ups:
   connections sharing the same Pipecat service instances is untested.
 - **Reconnect / renegotiation** edge cases and TURN configuration for remote
   access.
-- Unifying the server-mic toggle UX with the browser-audio control now that
-  both drive the pipeline.

@@ -591,3 +591,65 @@ def test_build_llm_wires_audit_writer(tmp_path: Any, monkeypatch: pytest.MonkeyP
     asyncio.run(svc._audit_writer("n.v.t. (command)", "command_runtime", "ok"))
     out = IngestionStore(cfg.audit_db_path).query_audit(actie="command_runtime")
     assert out["total_returned"] == 1
+
+
+# ---------- compiled graph (requires the langgraph extra) -------------------
+
+
+@pytest.mark.asyncio
+async def test_build_runner_carries_chat_input_through_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the graph was compiled with ``StateGraph(dict)``, which has
+    no annotated state channels -- LangGraph silently dropped the
+    ``chat_input`` passed to ``ainvoke`` and the first node raised
+    ``KeyError: 'chat_input'`` on every turn. Compile the real graph (with
+    fake chat models) and drive a command turn end to end through it."""
+    pytest.importorskip("langgraph")
+    import langchain_openai
+
+    from voice_agent.backends.llm.langgraph_helmsman import graph as graph_mod
+    from voice_agent.config import LlmConfig
+
+    seen: list[str] = []
+
+    class _FakeResp:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class _FakeChat:
+        def __init__(self, **kwargs: Any) -> None:
+            # The classify model is the only one built with max_tokens=8.
+            self._is_classify = kwargs.get("max_tokens") == 8
+
+        async def ainvoke(self, messages: Any) -> _FakeResp:
+            seen.append(messages[-1].content)
+            if self._is_classify:
+                return _FakeResp("COMMAND")
+            return _FakeResp(
+                json.dumps(
+                    {
+                        "action": {
+                            "type": "rudder",
+                            "direction": "starboard",
+                            "degrees": 20,
+                        },
+                        "response": "Starboard twenty, aye.",
+                    }
+                )
+            )
+
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", _FakeChat)
+    cfg = LlmConfig(
+        backend="langgraph",
+        base_url="http://localhost:1234/v1",
+        model="unsloth/gemma-4-e4b-it",
+    )
+    async with httpx.AsyncClient() as client:
+        runner = graph_mod.build_runner(cfg, client)
+        result = await runner("turn starboard twenty degrees")
+
+    # classify and command must both have received the user's text.
+    assert seen == ["turn starboard twenty degrees"] * 2
+    assert result["action"]["type"] == "rudder"
+    assert result["response"] == "Starboard twenty, aye."

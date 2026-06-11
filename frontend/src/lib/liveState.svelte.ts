@@ -7,7 +7,7 @@
  * source of truth for live data -- do not duplicate fields into local state.
  */
 
-import { EventStream, fetchControlState, fetchSession } from './api';
+import { EventStream, fetchSession } from './api';
 import type {
   AgentEvent,
   ConnectionState,
@@ -27,11 +27,7 @@ export const live = $state({
   session: null as SessionInfo | null,
   entries: [] as Entry[],
   shipState: null as ShipStateEvent | null,
-  turnMetrics: [] as TurnMetricsEvent[],
-  /** ``null`` while the initial /api/control/state fetch is in flight.
-   *  Components should treat that as "unknown" and disable both inputs
-   *  rather than guessing. */
-  micEnabled: null as boolean | null
+  turnMetrics: [] as TurnMetricsEvent[]
 });
 
 let stream: EventStream | null = null;
@@ -93,13 +89,10 @@ function onEvent(ev: AgentEvent) {
     case 'turn_metrics':
       live.turnMetrics = live.turnMetrics.concat(ev).slice(-MAX_TURNS);
       break;
-    case 'input_mode_changed':
-      live.micEnabled = ev.mic_enabled;
-      break;
   }
 }
 
-/** Refresh every REST snapshot the UI shows in the header / chat toggle.
+/** Refresh every REST snapshot the UI shows in the header.
  *
  *  These fields don't have a corresponding pipeline event so they can't
  *  auto-update from the WebSocket -- the only way to keep them in sync is
@@ -111,9 +104,6 @@ function refreshSnapshots(): void {
   fetchSession()
     .then((info) => (live.session = info))
     .catch((err) => console.warn('GET /api/session failed', err));
-  fetchControlState()
-    .then((s) => (live.micEnabled = s.mic_enabled))
-    .catch((err) => console.warn('GET /api/control/state failed', err));
 }
 
 /**

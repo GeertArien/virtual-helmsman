@@ -14,8 +14,10 @@ audit trail (`POST /api/review/audit-event`), without ever blocking the user.
 Four pages:
 
 - **`/`** — *Monitor.* Live transcript, ship state, per-turn latency,
-  plus a text-command chatbox and a mic on/off toggle. The mic starts
-  **paused**, so the chatbox is the default input until it's enabled.
+  plus a text-command chatbox. Voice input is the **browser audio**
+  control (shown when the backend reports `browser_audio`): connecting
+  it grants the agent your mic, disconnecting cuts it — there is no
+  separate mic toggle.
 - **`/documents`** — upload PDFs to the n8n ingestion pipeline, list
   documents in qdrant, and review pending chunk batches.
   - **`/documents/<batch_id>`** — per-batch chunk review: approve, edit,
