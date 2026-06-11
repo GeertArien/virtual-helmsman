@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+# Cancel superseded runs on the same ref (e.g. rapid pushes to a PR).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast packaging check: the hatchling build needs no project dependencies,
+  # so this gives quick "does it build" feedback independent of the heavy
+  # test install below.
+  build:
+    name: build (sdist + wheel)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Build distributions
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  test:
+    name: lint + test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Supported range bounds (requires-python >=3.11,<3.14).
+        python-version: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # System libraries the pinned core deps need on a headless runner:
+      #   portaudio19-dev -> pyaudio (pipecat-ai[local], imported by the audio
+      #                      control tests) ; libsndfile1 / ffmpeg / espeak-ng
+      #   are the usual companions for the TTS/STT wheels' import paths.
+      - name: Install system audio libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            portaudio19-dev libsndfile1 ffmpeg espeak-ng
+
+      # The test suite is hermetic (no network, no GPU), but collection imports
+      # the backend factories, which pull the full pinned core dependency set
+      # (pipecat-ai[...], onnxruntime-gpu, kokoro-onnx, ...). onnxruntime-gpu
+      # installs and imports fine on a CPU runner — the CUDA provider is simply
+      # unavailable, which no test exercises. The langgraph extra is needed for
+      # the langgraph LLM backend and the local ingestion tests.
+      - name: Install project (dev + langgraph extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,langgraph]"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Test (pytest)
+        run: pytest -q
