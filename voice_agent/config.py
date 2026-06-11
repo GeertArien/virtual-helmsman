@@ -178,6 +178,20 @@ class AudioConfig(_Base):
     input_device: str = "default"
     output_device: str = "default"
     sample_rate: int = 16000
+    # Browser audio (issue #7): when true, the control plane serves a WebRTC
+    # signalling endpoint (POST /api/webrtc/offer) and runs a STT->LLM->TTS
+    # pipeline per browser connection, so the dashboard can talk to the
+    # helmsman and hear its reply over WebRTC. The heavy models are loaded
+    # once at startup and shared across connections. Off by default -- the
+    # agent then uses local hardware audio (LocalAudioTransport) unchanged.
+    # Requires the ``webrtc`` extra (pip install -e ".[webrtc]").
+    browser_enabled: bool = False
+    # STUN/TURN servers for WebRTC ICE. The default public STUN server is
+    # enough for localhost / same-LAN use; add a TURN server for NAT traversal
+    # across networks.
+    ice_servers: list[str] = Field(
+        default_factory=lambda: ["stun:stun.l.google.com:19302"]
+    )
 
 
 class LoggingConfig(_Base):

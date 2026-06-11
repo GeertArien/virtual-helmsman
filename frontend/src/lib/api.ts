@@ -81,6 +81,9 @@ export interface SessionInfo {
   llm_model: string;
   subscribers: number;
   events_dropped: number;
+  /** True when the backend mounts /ws/audio (audio.browser_enabled), i.e. the
+   *  dashboard can capture the mic and play audio in the browser. */
+  browser_audio?: boolean;
 }
 
 /** Where the Python control plane is reachable. Override via the URL query
@@ -96,6 +99,31 @@ export function backendUrl(): string {
 export function wsUrl(): string {
   const http = backendUrl();
   return http.replace(/^http/i, 'ws') + '/ws/events';
+}
+
+/** SDP answer to a WebRTC offer (mirrors SmallWebRTCConnection.get_answer). */
+export interface WebRTCAnswer {
+  sdp: string;
+  type: string;
+  pc_id: string;
+}
+
+/** POST /api/webrtc/offer — exchange an SDP offer for the agent's answer.
+ *  `pc_id` is echoed back on renegotiation. Throws ApiError (e.g. 503 when the
+ *  backend lacks the `webrtc` extra). */
+export async function postWebRTCOffer(offer: {
+  sdp: string;
+  type: string;
+  pc_id?: string;
+  restart_pc?: boolean;
+}): Promise<WebRTCAnswer> {
+  const res = await fetch(`${backendUrl()}/api/webrtc/offer`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(offer)
+  });
+  if (!res.ok) throw await readError(res);
+  return (await res.json()) as WebRTCAnswer;
 }
 
 export async function fetchSession(): Promise<SessionInfo> {

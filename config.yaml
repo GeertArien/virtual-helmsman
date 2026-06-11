@@ -47,6 +47,8 @@ audio:
   input_device: default
   output_device: default
   sample_rate: 16000
+  browser_enabled: false           # WebRTC browser audio: talk to the helmsman from the web UI (needs the `webrtc` extra; see docs/BROWSER_AUDIO.md)
+  # ice_servers: ["stun:stun.l.google.com:19302"]   # STUN/TURN for WebRTC ICE
 logging:
   level: info
   format: json

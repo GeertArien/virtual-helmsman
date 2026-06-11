@@ -68,6 +68,10 @@ langgraph = [
     # PDF text extraction for the HITL ingestion pipeline.
     "pypdf>=5.0",
 ]
+# Browser audio (issue #7): WebRTC transport for the dashboard, so the helmsman
+# can be driven from the web UI (mic capture + agent-audio playback) over
+# WebRTC. Pulls aiortc via pipecat's webrtc extra. See docs/BROWSER_AUDIO.md.
+webrtc = ["pipecat-ai[webrtc]==1.2.1"]
 # CUDA 12.x runtime + cuDNN 9.x for onnxruntime-gpu, as venv-local pip wheels
 # (no system-wide CUDA toolkit). Required on the NVIDIA client; the DLLs are
 # made discoverable by voice_agent/_cuda.py. nvrtc/nvjitlink arrive as deps.

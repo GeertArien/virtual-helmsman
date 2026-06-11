@@ -31,6 +31,7 @@ from voice_agent.api.control_router import TextInjector, create_control_router
 from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
 from voice_agent.api.review import create_review_router
+from voice_agent.api.webrtc import WebRTCManager, create_webrtc_router
 from voice_agent.config import DocumentsConfig, ReviewConfig
 from voice_agent.logging_setup import get_logger
 
@@ -47,6 +48,9 @@ class SessionInfo:
     turn_backend: str
     simulator_backend: str
     llm_model: str
+    # True when /ws/audio is mounted (audio.browser_enabled) so the dashboard
+    # can offer browser-side mic capture + playback.
+    browser_audio: bool = False
 
 
 def _now_iso() -> str:
@@ -64,6 +68,7 @@ def create_app(
     inject_text: TextInjector | None = None,
     config_path: Path | None = None,
     llm_model: str | None = None,
+    webrtc_manager: WebRTCManager | None = None,
 ) -> FastAPI:
     """Build the FastAPI app bound to a live ``event_bus`` and session.
 
@@ -111,6 +116,8 @@ def create_app(
                 client = getattr(r, "_http_client", None)
                 if client is not None:
                     await client.aclose()
+            if webrtc_manager is not None:
+                await webrtc_manager.close()
 
     app = FastAPI(title="virtual-helmsman", version="0.1.0", lifespan=lifespan)
 
@@ -135,6 +142,11 @@ def create_app(
         )
     if config_path is not None:
         app.include_router(create_config_router(config_path=config_path))
+    # Browser-audio (WebRTC) signalling -- only when a manager is supplied
+    # (audio.browser_enabled), so the default local-hardware audio path is
+    # untouched.
+    if webrtc_manager is not None:
+        app.include_router(create_webrtc_router(webrtc_manager))
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
