@@ -30,7 +30,7 @@ service in :mod:`service` serialises that into one ``LLMTextFrame``.
 
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, TypedDict
 
 import httpx
 
@@ -50,6 +50,21 @@ AuditWriter = Callable[[str, str, str], Awaitable[None]]
 
 class _MissingDependency(ImportError):
     """Raised by :func:`build_runner` when the LangGraph stack isn't installed."""
+
+
+class _TurnState(TypedDict, total=False):
+    """LangGraph state schema for one helmsman turn.
+
+    StateGraph derives its state channels from the schema's annotations; a
+    bare ``dict`` has none, so the ``chat_input`` passed to ``ainvoke`` would
+    be silently dropped and the first node would KeyError. Every key a node
+    reads or returns must be declared here.
+    """
+
+    chat_input: str
+    intent: str
+    chunks: list[dict[str, Any]]
+    result: dict[str, Any]
 
 
 def _require_stack() -> tuple[Any, Any, Any, Any, Any, Any]:
@@ -193,7 +208,7 @@ def build_runner(
         await _audit(helpers.question_audit_row(parsed, output))
         return {"result": helpers.answer_envelope(output)}
 
-    graph = StateGraph(dict)
+    graph = StateGraph(_TurnState)
     graph.add_node("classify", classify_node)
     graph.add_node("command", command_node)
     graph.add_node("retrieve", retrieve_node)
