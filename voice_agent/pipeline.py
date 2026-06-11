@@ -37,15 +37,12 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
-from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from voice_agent.actions.processor import JsonActionProcessor
 from voice_agent.actions.prompt import SYSTEM_PROMPT
-from voice_agent.api.control import ControlState
 from voice_agent.api.events import EventBus, UserTranscriptObserver
-from voice_agent.api.mic_gate import MicGate
 from voice_agent.backends.llm.factory import create_llm
 from voice_agent.backends.simulator.base import SimulatorClient
 from voice_agent.backends.simulator.factory import create_simulator
@@ -71,8 +68,8 @@ class SharedBackends:
     (see ``parakeet_onnx._MODEL_CACHE``), so a factory call after warm-up is
     cheap; VAD/turn/TTS/LLM construction is fast (~1s combined).
 
-    The simulator (the one ship), event bus, and control state are genuinely
-    shared singletons.
+    The simulator (the one ship) and the event bus are genuinely shared
+    singletons.
     """
 
     vad_factory: Callable[[], Any]
@@ -82,7 +79,6 @@ class SharedBackends:
     llm_factory: Callable[[], FrameProcessor]
     simulator: SimulatorClient
     event_bus: EventBus | None
-    control_state: ControlState | None
     session_id: str
 
 
@@ -94,10 +90,6 @@ class BuiltPipeline:
     simulator: SimulatorClient
     session_id: str
     event_bus: EventBus | None
-    # Shared mic-on/off flag; the API mutates it, the pipeline's MicGate
-    # reads it on every audio frame. ``None`` when the API is disabled --
-    # the gate is then absent from the pipeline entirely.
-    control_state: ControlState | None
     # Shared LLM context. The user/assistant aggregator pair both reference
     # this same object; mutating it via add_message is how the control
     # router injects typed commands without going through the
@@ -231,12 +223,6 @@ def build_shared_backends(config: AppConfig, session_id: str) -> SharedBackends:
     # ``event_bus=None`` as a no-op, keeping the agent runnable headless.
     event_bus: EventBus | None = EventBus() if config.api.enabled else None
 
-    # --- control state (mic gate) ---------------------------------------
-    # Only meaningful when the API is enabled -- nothing else can flip the flag.
-    control_state: ControlState | None = (
-        ControlState() if config.api.enabled else None
-    )
-
     # --- simulator ------------------------------------------------------
     # One SimulatorClient, built once (the ship is a single shared entity).
     simulator = create_simulator(config.simulator)
@@ -260,7 +246,6 @@ def build_shared_backends(config: AppConfig, session_id: str) -> SharedBackends:
         llm_factory=llm_factory,
         simulator=simulator,
         event_bus=event_bus,
-        control_state=control_state,
         session_id=session_id,
     )
 
@@ -269,20 +254,18 @@ def assemble_task(
     backends: SharedBackends,
     config: AppConfig,
     transport: Any,
-    *,
-    gate_mic: bool = True,
 ) -> tuple[PipelineTask, LLMContext]:
     """Wire the shared backends + a transport into a runnable task.
 
     Builds the cheap, per-run pieces (context, aggregators, action processor,
     monitors, single-turn reset) around the shared heavy backends, slotting the
-    given ``transport`` at the head and tail. Used for the local-audio pipeline
-    and for each per-connection WebRTC pipeline.
+    given ``transport`` at the head and tail. Called once per WebRTC browser
+    connection.
 
-    ``gate_mic=False`` omits the :class:`MicGate`: browser-audio pipelines are
-    gated by the connection itself -- the user explicitly connects/disconnects
-    browser audio in the dashboard, so a second server-side mute would only
-    mean a deaf-looking agent. The local-hardware pipeline keeps the gate.
+    There is no server-side mic gate: a browser-audio pipeline is gated by the
+    connection itself -- the user explicitly connects/disconnects browser audio
+    in the dashboard, so a second server-side mute would only mean a
+    deaf-looking agent.
     """
     event_bus = backends.event_bus
     json_action = JsonActionProcessor(
@@ -327,34 +310,24 @@ def assemble_task(
     if event_bus is not None:
         observers.append(UserTranscriptObserver(event_bus=event_bus))
 
-    # MicGate sits between the transport mic and STT so it can drop inbound
-    # audio frames before they hit the recogniser. Omitted in headless mode
-    # and in browser-audio pipelines (gate_mic=False).
-    mic_gate = (
-        MicGate(state=backends.control_state)
-        if gate_mic and backends.control_state is not None
-        else None
-    )
-
     # Single-turn mode: wipe history after each assistant turn so the LLM only
     # ever sees [system, current_user_input].
     single_turn_reset = SingleTurnContextReset(reset=build_context_resetter(context))
 
-    pipeline_processors = [transport.input()]
-    if mic_gate is not None:
-        pipeline_processors.append(mic_gate)
-    pipeline_processors += [
-        stt,
-        context_aggregator.user(),
-        llm,
-        json_action,
-        tts,
-        transport.output(),
-        context_aggregator.assistant(),
-        conversation_logger,
-        single_turn_reset,
-    ]
-    pipeline = Pipeline(pipeline_processors)
+    pipeline = Pipeline(
+        [
+            transport.input(),
+            stt,
+            context_aggregator.user(),
+            llm,
+            json_action,
+            tts,
+            transport.output(),
+            context_aggregator.assistant(),
+            conversation_logger,
+            single_turn_reset,
+        ]
+    )
     # idle_timeout_secs=None disables Pipecat's 5-minute idle cancel -- a
     # helmsman is silent between commands, and long quiet stretches should not
     # tear the pipeline down.
@@ -416,27 +389,3 @@ def assemble_text_task(
         pipeline, observers=[latency_tracker], idle_timeout_secs=None
     )
     return task, context
-
-
-def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
-    """Construct the default local-audio pipeline and supporting objects.
-
-    Builds the shared backends and assembles a single task bound to the local
-    hardware transport -- the behaviour the CLI has always had.
-    """
-    backends = build_shared_backends(config, session_id)
-    # TODO: config.audio.input_device/output_device are accepted but not yet
-    # mapped to device indices; the OS default device is used.
-    transport = LocalAudioTransport(
-        LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
-    )
-    task, context = assemble_task(backends, config, transport)
-    return BuiltPipeline(
-        task=task,
-        simulator=backends.simulator,
-        session_id=session_id,
-        event_bus=backends.event_bus,
-        control_state=backends.control_state,
-        llm_context=context,
-        backends=backends,
-    )

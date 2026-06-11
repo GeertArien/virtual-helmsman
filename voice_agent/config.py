@@ -175,17 +175,19 @@ class SimulatorConfig(_Base):
 
 
 class AudioConfig(_Base):
-    input_device: str = "default"
-    output_device: str = "default"
+    """Browser-audio (WebRTC) settings.
+
+    Voice input/output is always the **browser**: the control plane serves a
+    WebRTC signalling endpoint (``POST /api/webrtc/offer``) and runs a
+    STT->LLM->TTS pipeline per browser connection, so the dashboard talks to the
+    helmsman and hears its reply over WebRTC. The heavy models are loaded once
+    at startup and shared across connections. Audio therefore needs both
+    ``api.enabled: true`` and the ``webrtc`` extra (``pip install -e ".[webrtc]"``);
+    there is no local-hardware audio path.
+    """
+
+    # STT input rate used by the offline benchmark harness (scripts/bench_stt.py).
     sample_rate: int = 16000
-    # Browser audio (issue #7): when true, the control plane serves a WebRTC
-    # signalling endpoint (POST /api/webrtc/offer) and runs a STT->LLM->TTS
-    # pipeline per browser connection, so the dashboard can talk to the
-    # helmsman and hear its reply over WebRTC. The heavy models are loaded
-    # once at startup and shared across connections. Off by default -- the
-    # agent then uses local hardware audio (LocalAudioTransport) unchanged.
-    # Requires the ``webrtc`` extra (pip install -e ".[webrtc]").
-    browser_enabled: bool = False
     # STUN/TURN servers for WebRTC ICE. The default public STUN server is
     # enough for localhost / same-LAN use; add a TURN server for NAT traversal
     # across networks.

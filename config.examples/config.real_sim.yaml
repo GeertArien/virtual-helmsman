@@ -47,8 +47,6 @@ simulator:
     log_commands: true
 
 audio:
-  input_device: default
-  output_device: default
   sample_rate: 16000
 
 logging:

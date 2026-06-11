@@ -7,8 +7,10 @@ English, replies in speech, and either executes ship-simulator actions or
 answers maritime questions grounded in a RAG corpus — targeting
 **< 800 ms voice-to-voice latency** on a single NVIDIA client.
 
-STT, TTS, VAD, and turn detection run **locally on the GPU**. The LLM runs
-over HTTP; two backends ship:
+You talk to it from the **web dashboard**: the browser captures your mic and
+plays the reply back over WebRTC (there is no local-hardware audio path). STT,
+TTS, VAD, and turn detection run **locally on the GPU**. The LLM runs over
+HTTP; two backends ship:
 
 - **`langgraph`** *(shipped default)* — runs the helmsman **in this
   backend**: a LangGraph graph classifies each turn, parses commands, and
@@ -31,11 +33,11 @@ Every model and the simulator client is a swappable backend selected from
 ## Architecture
 
 ```
-mic → VAD → STT → smart-turn → LLM ─┬─▶ command action ──▶ SimulatorClient
-                                    │                       (real | mock)
-                                    └─▶ answer (hybrid RAG)
-                                                │
-                       spoken response or answer ──▶ TTS → speakers
+browser mic ─(WebRTC)─▶ VAD → STT → smart-turn → LLM ─┬─▶ command action ──▶ SimulatorClient
+                                                      │                       (real | mock)
+                                                      └─▶ answer (hybrid RAG)
+                                                                  │
+              browser ◀─(WebRTC)─ TTS ◀── spoken response or answer ┘
 ```
 
 Built on [Pipecat](https://docs.pipecat.ai). The LLM answers each turn
@@ -128,8 +130,8 @@ successful install on the target client, lock the full transitive set
 The agent and the dashboard are two processes. Run each in its own terminal:
 
 ```bash
-# Terminal 1 — voice agent + control-plane API (loads the GPU models, opens
-# the audio devices, serves the API on http://127.0.0.1:8765)
+# Terminal 1 — voice agent + control-plane API (loads the GPU models and serves
+# the API + browser-audio signalling on http://127.0.0.1:8765)
 python -m voice_agent.main --config config.yaml
 
 # Terminal 2 — SvelteKit dashboard (http://localhost:5173)
@@ -141,9 +143,10 @@ Then open <http://localhost:5173>. The dashboard talks to the backend at
 the API must be up for the live transcript, ship state, and chat box to work.
 
 The default `config.yaml` uses the `mock` simulator and has `api.enabled: true`,
-so this runs the full STT→LLM→TTS pipeline with no real simulator attached. The
-**mic starts paused** — type commands in the chat box, or flip the mic toggle to
-record. The default `langgraph` LLM and the document/review pages additionally
+so this runs the full STT→LLM→TTS pipeline with no real simulator attached.
+**Speak** via the dashboard's browser-audio control (needs the `webrtc` extra;
+see [`docs/BROWSER_AUDIO.md`](docs/BROWSER_AUDIO.md)) or **type** commands in the
+chat box. The default `langgraph` LLM and the document/review pages additionally
 need LM Studio and qdrant reachable; everything degrades gracefully when they
 aren't.
 
@@ -204,7 +207,9 @@ virtual-helmsman --config config.yaml
 ```
 
 The default config uses the **mock** simulator, so the full STT→LLM→TTS
-pipeline runs without a real simulator attached.
+pipeline runs without a real simulator attached. Voice input/output is the
+browser (WebRTC); the agent needs `api.enabled: true` and the `webrtc` extra
+to serve it.
 
 ## LLM configuration
 
@@ -257,9 +262,9 @@ blank to use Langfuse Cloud.
 Qdrant and the embedding endpoint are reached over plain HTTP, so no
 `qdrant-client` is added. Full design + node-by-node parity with the n8n
 runtime workflow: [`docs/LANGGRAPH_BACKEND.md`](docs/LANGGRAPH_BACKEND.md).
-The companion `review.backend: local` setting moves the document-ingestion +
-HITL review side in-backend too ([`docs/LOCAL_INGESTION.md`](docs/LOCAL_INGESTION.md));
-together they remove the n8n dependency entirely
+The companion `review:` block moves the document-ingestion + HITL review side
+in-backend too ([`docs/LOCAL_INGESTION.md`](docs/LOCAL_INGESTION.md)); together
+they remove the n8n dependency entirely
 (`config.examples/config.langgraph.yaml` enables both).
 
 ### `openai_compatible`
@@ -349,7 +354,7 @@ pytest
   SQLite store, qdrant request shapes, and the full upload→review→upsert
   loop (`test_ingestion_pure.py`, `test_ingestion_store.py`).
 - The FastAPI control plane: `/api/config` (`test_api_config.py`),
-  control/mic-gate (`test_api_control.py`), document
+  control text-injection (`test_api_control.py`), document
   list/delete/upload (`test_api_documents.py`), the WebSocket event
   stream (`test_api_events.py`), and the in-backend HITL review pipeline
   (`test_api_review.py`).
@@ -415,11 +420,9 @@ down. Full declaration text: [`frontend/static/documentation/transparantieverkla
 Four pages:
 
 - **Monitor** (`/`) — live transcript, ship state, per-turn latency,
-  plus a text-command chatbox and a mic on/off toggle. The **mic starts
-  paused**, so the chatbox is the default input until the user enables it.
-  With `audio.browser_enabled: true` a **browser-audio** control also appears,
-  capturing the mic and playing audio in the browser (see
-  [`docs/BROWSER_AUDIO.md`](docs/BROWSER_AUDIO.md)).
+  plus the two inputs: a **browser-audio** control that captures the mic and
+  plays the reply in the browser over WebRTC (see
+  [`docs/BROWSER_AUDIO.md`](docs/BROWSER_AUDIO.md)), and a text-command chatbox.
 - **Documents** (`/documents`) — upload a PDF to the in-backend HITL
   ingestion pipeline, list and delete document chunks in qdrant, and drill
   into a pending review batch at `/documents/<batch_id>` to approve / edit /
@@ -460,6 +463,7 @@ frontend boots before all integrations are wired. Then
 
 ## Non-goals (v1)
 
-English-only; no multi-user/WebRTC; no persona/voice cloning; no
-cross-run memory; this client does not host the LLM, implement the UDP
-protocol, or model ship dynamics in the mock.
+English-only; single local user (browser audio is intended for one browser
+at a time); no persona/voice cloning; no cross-run memory; this client does
+not host the LLM, implement the UDP protocol, or model ship dynamics in the
+mock.

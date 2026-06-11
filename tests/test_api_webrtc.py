@@ -3,7 +3,7 @@
 The live audio path needs aiortc + a browser + GPU models and can't run
 headlessly. What's covered here without the optional ``webrtc`` extra:
 
-* config (``audio.browser_enabled`` / ``ice_servers``),
+* config (``audio.ice_servers``),
 * ``WebRTCManager.available()`` reporting the extra's absence,
 * the endpoint returning a clear 503 when the extra is missing,
 * request validation, and the ``create_app`` mount gate.
@@ -49,7 +49,6 @@ def _config() -> Any:
                 "base_url": "http://llm:1234/v1",
                 "model": "nvidia/nemotron-3-nano-4b",
             },
-            "audio": {"browser_enabled": True},
         }
     )
 
@@ -78,7 +77,7 @@ def _session() -> SessionInfo:
 # ---------- config ------------------------------------------------------------
 
 
-def test_audio_config_browser_defaults() -> None:
+def test_audio_config_ice_defaults() -> None:
     cfg = parse_config(
         {
             "stt": {"model": "m"},
@@ -86,7 +85,6 @@ def test_audio_config_browser_defaults() -> None:
             "llm": {"base_url": "http://x/v1", "model": "nvidia/nemotron-3-nano-4b"},
         }
     )
-    assert cfg.audio.browser_enabled is False
     assert cfg.audio.ice_servers == ["stun:stun.l.google.com:19302"]
 
 
@@ -96,7 +94,7 @@ def test_audio_config_custom_ice_servers() -> None:
             "stt": {"model": "m"},
             "tts": {"voice": "v"},
             "llm": {"base_url": "http://x/v1", "model": "nvidia/nemotron-3-nano-4b"},
-            "audio": {"browser_enabled": True, "ice_servers": ["stun:example:3478"]},
+            "audio": {"ice_servers": ["stun:example:3478"]},
         }
     )
     assert cfg.audio.ice_servers == ["stun:example:3478"]

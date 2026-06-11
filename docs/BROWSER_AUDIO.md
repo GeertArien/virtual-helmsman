@@ -1,12 +1,14 @@
 # Browser audio (WebRTC)
 
 Talk to the helmsman from the **web dashboard** — capture the browser's
-microphone and play the agent's spoken reply in the browser — instead of using
-the machine's local microphone/speakers. Tracked in issue #7.
+microphone and play the agent's spoken reply in the browser. This is the
+**only** voice path: there is no local-hardware audio transport. Originally
+tracked in issue #7.
 
-> **Default behaviour is unchanged.** The agent uses local hardware audio
-> (Pipecat `LocalAudioTransport`) unless `audio.browser_enabled` is `true`.
-> Requires the `webrtc` extra: `pip install -e ".[webrtc]"`.
+> **Requirements.** Voice needs both `api.enabled: true` (the control plane
+> serves the signalling endpoint) and the `webrtc` extra:
+> `pip install -e ".[webrtc]"`. Without the extra the offer endpoint returns a
+> clear 503; without the API there is no input at all.
 
 ## How it works
 
@@ -35,25 +37,24 @@ STT/TTS/LLM/VAD/turn services bound to that connection's WebRTC transport.
 What *is* shared across connections: the loaded STT model (cached at module
 level in `parakeet_onnx`, warmed at startup), the one simulator, and the
 event bus. Reconnect cost is ~1 s of service construction, not a model
-reload. In browser mode the process serves the API, runs one pipeline per
-live connection, plus a standing text-only pipeline for the chatbox.
+reload. The process serves the API, runs one pipeline per live connection,
+plus a standing text-only pipeline for the chatbox.
 
 The **browser-audio control is the mic on/off**: connecting grants the agent
-your audio, disconnecting cuts it. Browser pipelines carry no `MicGate`
-(`assemble_task(..., gate_mic=False)`) — a second server-side mute on top of
-an explicit connect would only look like a deaf agent. The server-mic toggle
-UI is gone; `/api/control/mic` remains for the local-hardware mode only.
+your audio, disconnecting cuts it. Browser pipelines carry no server-side mute
+— a second mute on top of an explicit connect would only look like a deaf
+agent — which is why the old `/api/control/mic` server-mic toggle no longer
+exists.
 
-The **text chatbox still works** in browser mode: typed commands flow through
-a standing text-only pipeline (user aggregator → LLM → JSON action →
-assistant aggregator, no audio) that runs for the whole session against the
-same simulator and event bus. Replies surface in the transcript panel.
+The **text chatbox** is the other input: typed commands flow through a
+standing text-only pipeline (user aggregator → LLM → JSON action → assistant
+aggregator, no audio) that runs for the whole session against the same
+simulator and event bus. Replies surface in the transcript panel.
 
 ### Enable it
 
 ```yaml
 audio:
-  browser_enabled: true
   ice_servers: ["stun:stun.l.google.com:19302"]   # add a TURN server for cross-NAT
 api:
   enabled: true     # required — browser audio is served by the control plane

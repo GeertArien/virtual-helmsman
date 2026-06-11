@@ -26,7 +26,6 @@ from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from voice_agent.api.config_router import create_config_router
-from voice_agent.api.control import ControlState
 from voice_agent.api.control_router import TextInjector, create_control_router
 from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
@@ -48,9 +47,10 @@ class SessionInfo:
     turn_backend: str
     simulator_backend: str
     llm_model: str
-    # True when /ws/audio is mounted (audio.browser_enabled) so the dashboard
-    # can offer browser-side mic capture + playback.
-    browser_audio: bool = False
+    # Always true: browser audio (WebRTC) is the only voice path, so the
+    # dashboard always offers browser-side mic capture + playback. Retained as
+    # a field for the frontend's session snapshot.
+    browser_audio: bool = True
 
 
 def _now_iso() -> str:
@@ -64,7 +64,6 @@ def create_app(
     cors_allow_origins: list[str] | None = None,
     documents: DocumentsConfig | None = None,
     review: ReviewConfig | None = None,
-    control_state: ControlState | None = None,
     inject_text: TextInjector | None = None,
     config_path: Path | None = None,
     llm_model: str | None = None,
@@ -81,12 +80,9 @@ def create_app(
     omitted, that family of endpoints simply isn't registered (the frontend
     gets a 404 rather than a configuration error).
 
-    ``control_state`` mounts the ``/api/control`` router (mic toggle,
-    text-command injection). ``inject_text`` is optional: without it the
-    mic toggle still works -- it gates the MicGate in every assembled
-    pipeline, including browser-audio ones -- but ``POST /api/control/text``
-    returns 503 (browser-audio mode has no single local task to inject
-    into). Decoupling them lets tests pass a list-append stub for
+    ``inject_text`` mounts the ``/api/control`` router (``POST
+    /api/control/text``, the dashboard chatbox). Omitted when there is no
+    pipeline task to inject into; tests pass a list-append stub for
     ``inject_text`` without standing up a real pipeline task.
 
     Passing ``config_path`` mounts ``/api/config`` (view + edit ``config.yaml``
@@ -134,19 +130,14 @@ def create_app(
         app.include_router(docs_router)
     if review_router is not None:
         app.include_router(review_router)
-    if control_state is not None:
+    if inject_text is not None:
         app.include_router(
-            create_control_router(
-                state=control_state,
-                event_bus=event_bus,
-                inject_text=inject_text,
-            )
+            create_control_router(event_bus=event_bus, inject_text=inject_text)
         )
     if config_path is not None:
         app.include_router(create_config_router(config_path=config_path))
-    # Browser-audio (WebRTC) signalling -- only when a manager is supplied
-    # (audio.browser_enabled), so the default local-hardware audio path is
-    # untouched.
+    # Browser-audio (WebRTC) signalling -- mounted when a manager is supplied
+    # (the API is enabled). Browser audio is the only voice input path.
     if webrtc_manager is not None:
         app.include_router(create_webrtc_router(webrtc_manager))
 
