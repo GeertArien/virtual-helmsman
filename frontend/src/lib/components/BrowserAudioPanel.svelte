@@ -1,32 +1,30 @@
 <script lang="ts">
-  import { BrowserAudio, type AudioStatus } from '$lib/audio/browserAudio';
+  import { WebRTCAudio, type WebRTCStatus } from '$lib/audio/webrtcAudio';
   import { onDestroy } from 'svelte';
 
-  // Browser-audio preview (issue #7, phase one). Captures the mic in the
-  // browser, streams raw PCM to /ws/audio, and plays the looped-back audio —
-  // proving the capture → stream → playback path. It does NOT yet talk to the
-  // helmsman pipeline (that's phase two); kept separate from the server-mic
-  // toggle in ChatPanel to avoid conflating the two.
-  let status = $state<AudioStatus>('idle');
+  // Browser audio over WebRTC (issue #7): captures the mic and connects to the
+  // helmsman's per-connection pipeline, so you can speak to the agent and hear
+  // its reply in the browser. Shown only when the backend reports
+  // `browser_audio` (audio.browser_enabled). Separate from the server-mic
+  // toggle, which gates the local-hardware pipeline.
+  let status = $state<WebRTCStatus>('idle');
   let detail = $state<string | null>(null);
-  let level = $state(0);
 
-  let audio: BrowserAudio | null = null;
-  const live = $derived(status === 'live' || status === 'connecting');
+  let audio: WebRTCAudio | null = null;
+  const connected = $derived(status === 'live' || status === 'connecting');
 
   async function toggle() {
-    if (live) {
+    if (connected) {
       await audio?.stop();
       audio = null;
       return;
     }
     detail = null;
-    audio = new BrowserAudio({
+    audio = new WebRTCAudio({
       onStatus: (s, d) => {
         status = s;
         detail = d ?? null;
-      },
-      onLevel: (p) => (level = p)
+      }
     });
     await audio.start();
   }
@@ -41,11 +39,11 @@
     <button
       type="button"
       class="toggle"
-      data-on={live}
+      data-on={connected}
       onclick={toggle}
       disabled={status === 'connecting'}
-      aria-pressed={live}
-      title={live ? 'Stop browser audio' : 'Start browser audio (mic → backend → playback)'}
+      aria-pressed={connected}
+      title={connected ? 'Disconnect browser audio' : 'Talk to the helmsman from your browser'}
     >
       <span class="led" aria-hidden="true"></span>
       <span class="lbl">
@@ -60,13 +58,10 @@
         {/if}
       </span>
     </button>
-    <div class="meter" aria-hidden="true">
-      <div class="bar" style:width={`${Math.min(100, Math.round(level * 140))}%`}></div>
-    </div>
   </header>
   <p class="hint">
-    Preview: your mic is streamed to the backend and looped back to your
-    speakers. Talking to the helmsman over browser audio is the next step.
+    Speak to the helmsman from your browser — your mic streams over WebRTC and
+    the agent's reply plays back here.
   </p>
   {#if detail && status === 'error'}
     <div class="status err">{detail}</div>
@@ -112,22 +107,12 @@
   .toggle[data-on='true'] .led {
     background: var(--accent);
     box-shadow: 0 0 6px var(--accent);
+    animation: blink 1.2s ease-in-out infinite;
+  }
+  @keyframes blink {
+    50% { opacity: 0.4; }
   }
   .lbl { font-family: ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace; }
-
-  .meter {
-    flex: 1;
-    height: 6px;
-    background: var(--bg-elev-2);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    overflow: hidden;
-  }
-  .bar {
-    height: 100%;
-    background: var(--good);
-    transition: width 80ms linear;
-  }
   .hint { color: var(--fg-muted); font-size: 0.76rem; margin: 0; }
   .status {
     padding: 0.35rem 0.55rem;

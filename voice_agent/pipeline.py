@@ -59,6 +59,29 @@ from voice_agent.metrics import ConversationLogger, LatencyTracker
 
 
 @dataclass
+class SharedBackends:
+    """The expensive, reusable pieces of the agent, built once at startup.
+
+    The model-loading backends (VAD, turn detector, STT, TTS) and the LLM, the
+    one simulator, and the API-facing event bus / control state are constructed
+    once and reused across every pipeline assembly. For the default local-audio
+    run that's a single pipeline; for browser (WebRTC) audio it's one pipeline
+    per connection -- so the heavy models load once and are shared rather than
+    reloaded per connect (issue #7, "shared models").
+    """
+
+    vad: Any
+    turn_stop_strategy: Any
+    stt: FrameProcessor
+    tts: FrameProcessor
+    llm: FrameProcessor
+    simulator: SimulatorClient
+    event_bus: EventBus | None
+    control_state: ControlState | None
+    session_id: str
+
+
+@dataclass
 class BuiltPipeline:
     """The runnable pipeline plus resources the caller must clean up."""
 
@@ -75,6 +98,9 @@ class BuiltPipeline:
     # router injects typed commands without going through the
     # LLMMessagesAppendFrame path (which both aggregators double-handle).
     llm_context: LLMContext
+    # The heavy backends, exposed so browser-audio mode can assemble a fresh
+    # per-connection pipeline against the same loaded models.
+    backends: SharedBackends
 
 
 def build_text_injector(
@@ -159,8 +185,12 @@ def build_context_resetter(context: LLMContext):
     return reset
 
 
-def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
-    """Construct the Pipecat pipeline and supporting objects from config."""
+def build_shared_backends(config: AppConfig, session_id: str) -> SharedBackends:
+    """Build the heavy, reusable backends once (models, LLM, simulator, bus).
+
+    These are shared across every :func:`assemble_task` call -- one for local
+    audio, one per WebRTC connection -- so the models load a single time.
+    """
     log = get_logger("pipeline")
 
     # --- local models ---------------------------------------------------
@@ -168,19 +198,10 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
     turn_stop_strategy = create_turn(config.turn_detection)
     stt = create_stt(config.stt)
     tts = create_tts(config.tts)
-    # LLM backend is chosen by config.llm.backend: openai_compatible (LM
-    # Studio + JSON-schema response_format, command-only) or n8n (webhook
-    # adapter, command + RAG questions). Both slot into the same pipeline
-    # position because the n8n adapter mimics OpenAILLMService's frame
-    # contract.
+    # LLM backend is chosen by config.llm.backend: openai_compatible (LM Studio
+    # + JSON-schema response_format, command-only) or langgraph (in-backend
+    # command + RAG questions). Both slot into the same pipeline position.
     llm = create_llm(config.llm)
-
-    # --- transport ------------------------------------------------------
-    # TODO: config.audio.input_device/output_device are accepted but not yet
-    # mapped to device indices; the OS default device is used.
-    transport = LocalAudioTransport(
-        LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
-    )
 
     # --- event bus (frontend observability) -----------------------------
     # Created only when the API is enabled. Processors/observers below take
@@ -188,87 +209,17 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
     event_bus: EventBus | None = EventBus() if config.api.enabled else None
 
     # --- control state (mic gate) ---------------------------------------
-    # Only meaningful when the API is enabled -- nothing else can flip the
-    # flag. Skipping the gate entirely in headless mode keeps the audio path
-    # one processor shorter for the CLI-only deployment.
+    # Only meaningful when the API is enabled -- nothing else can flip the flag.
     control_state: ControlState | None = (
         ControlState() if config.api.enabled else None
     )
 
-    # --- simulator + action processor -----------------------------------
-    # One SimulatorClient, built once, driven by the JSON action processor.
+    # --- simulator ------------------------------------------------------
+    # One SimulatorClient, built once (the ship is a single shared entity).
     simulator = create_simulator(config.simulator)
-    json_action = JsonActionProcessor(simulator=simulator, event_bus=event_bus)
-
-    # --- context aggregator (carries VAD + turn detection) --------------
-    # No tools are declared: the agent uses JSON structured output, not native
-    # tool calls (a small local model emits constrained JSON far more reliably).
-    # AlwaysUserMuteStrategy suppresses STT input while the bot is speaking, so
-    # the agent does not transcribe its own TTS as a phantom command (the local
-    # mic-and-speaker setup has no hardware echo cancellation).
-    context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
-    context_aggregator = LLMContextAggregatorPair(
-        context,
-        user_params=LLMUserAggregatorParams(
-            vad_analyzer=vad,
-            user_turn_strategies=UserTurnStrategies(stop=[turn_stop_strategy]),
-            user_mute_strategies=[AlwaysUserMuteStrategy()],
-        ),
-    )
-
-    # --- monitors -------------------------------------------------------
-    # LatencyTracker is an observer (sees every frame at its source);
-    # ConversationLogger is a tail processor. UserTranscriptObserver is
-    # attached only when the event bus is live -- its sole job is publishing.
-    latency_tracker = LatencyTracker(
-        session_id=session_id,
-        metrics_dir=config.logging.metrics_log_path,
-        event_bus=event_bus,
-    )
-    conversation_logger = ConversationLogger(
-        session_id=session_id,
-        conversation_dir=config.logging.conversation_log_path,
-    )
-    observers = [latency_tracker]
-    if event_bus is not None:
-        observers.append(UserTranscriptObserver(event_bus=event_bus))
-
-    # MicGate sits between the transport mic and STT so it can drop inbound
-    # audio frames before they hit the recogniser. Omitted in headless mode
-    # because there's nothing to toggle it.
-    mic_gate = MicGate(state=control_state) if control_state is not None else None
-
-    # Single-turn mode: wipe history after each assistant turn so the LLM
-    # only ever sees [system, current_user_input]. Makes STT hallucinations
-    # harmless and keeps the helmsman a stateless command parser.
-    context_reset = build_context_resetter(context)
-    single_turn_reset = SingleTurnContextReset(reset=context_reset)
-
-    pipeline_processors = [transport.input()]
-    if mic_gate is not None:
-        pipeline_processors.append(mic_gate)
-    pipeline_processors += [
-        stt,
-        context_aggregator.user(),
-        llm,
-        json_action,
-        tts,
-        transport.output(),
-        context_aggregator.assistant(),
-        conversation_logger,
-        single_turn_reset,
-    ]
-    pipeline = Pipeline(pipeline_processors)
-    # Interruption handling lives in the turn strategies (VADUserTurnStartStrategy
-    # enables interruptions by default), not in PipelineParams.
-    # idle_timeout_secs=None disables Pipecat's 5-minute idle cancel -- a
-    # helmsman is silent between commands, and long stretches of quiet should
-    # not tear the pipeline down (also matters for the monitor-only frontend
-    # workflow, where the user is watching but not necessarily speaking).
-    task = PipelineTask(pipeline, observers=observers, idle_timeout_secs=None)
 
     log.info(
-        "pipeline_built",
+        "shared_backends_built",
         session_id=session_id,
         stt=config.stt.backend,
         tts=config.tts.backend,
@@ -278,11 +229,120 @@ def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
         llm_model=config.llm.model,
         api_enabled=config.api.enabled,
     )
-    return BuiltPipeline(
-        task=task,
+    return SharedBackends(
+        vad=vad,
+        turn_stop_strategy=turn_stop_strategy,
+        stt=stt,
+        tts=tts,
+        llm=llm,
         simulator=simulator,
-        session_id=session_id,
         event_bus=event_bus,
         control_state=control_state,
+        session_id=session_id,
+    )
+
+
+def assemble_task(
+    backends: SharedBackends,
+    config: AppConfig,
+    transport: Any,
+) -> tuple[PipelineTask, LLMContext]:
+    """Wire the shared backends + a transport into a runnable task.
+
+    Builds the cheap, per-run pieces (context, aggregators, action processor,
+    monitors, single-turn reset) around the shared heavy backends, slotting the
+    given ``transport`` at the head and tail. Used for the local-audio pipeline
+    and for each per-connection WebRTC pipeline.
+    """
+    event_bus = backends.event_bus
+    json_action = JsonActionProcessor(
+        simulator=backends.simulator, event_bus=event_bus
+    )
+
+    # --- context aggregator (carries VAD + turn detection) --------------
+    # No tools are declared: the agent uses JSON structured output, not native
+    # tool calls (a small local model emits constrained JSON far more reliably).
+    # AlwaysUserMuteStrategy suppresses STT input while the bot is speaking, so
+    # the agent does not transcribe its own TTS as a phantom command.
+    context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
+    context_aggregator = LLMContextAggregatorPair(
+        context,
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=backends.vad,
+            user_turn_strategies=UserTurnStrategies(
+                stop=[backends.turn_stop_strategy]
+            ),
+            user_mute_strategies=[AlwaysUserMuteStrategy()],
+        ),
+    )
+
+    # --- monitors -------------------------------------------------------
+    latency_tracker = LatencyTracker(
+        session_id=backends.session_id,
+        metrics_dir=config.logging.metrics_log_path,
+        event_bus=event_bus,
+    )
+    conversation_logger = ConversationLogger(
+        session_id=backends.session_id,
+        conversation_dir=config.logging.conversation_log_path,
+    )
+    observers = [latency_tracker]
+    if event_bus is not None:
+        observers.append(UserTranscriptObserver(event_bus=event_bus))
+
+    # MicGate sits between the transport mic and STT so it can drop inbound
+    # audio frames before they hit the recogniser. Omitted in headless mode.
+    mic_gate = (
+        MicGate(state=backends.control_state)
+        if backends.control_state is not None
+        else None
+    )
+
+    # Single-turn mode: wipe history after each assistant turn so the LLM only
+    # ever sees [system, current_user_input].
+    single_turn_reset = SingleTurnContextReset(reset=build_context_resetter(context))
+
+    pipeline_processors = [transport.input()]
+    if mic_gate is not None:
+        pipeline_processors.append(mic_gate)
+    pipeline_processors += [
+        backends.stt,
+        context_aggregator.user(),
+        backends.llm,
+        json_action,
+        backends.tts,
+        transport.output(),
+        context_aggregator.assistant(),
+        conversation_logger,
+        single_turn_reset,
+    ]
+    pipeline = Pipeline(pipeline_processors)
+    # idle_timeout_secs=None disables Pipecat's 5-minute idle cancel -- a
+    # helmsman is silent between commands, and long quiet stretches should not
+    # tear the pipeline down.
+    task = PipelineTask(pipeline, observers=observers, idle_timeout_secs=None)
+    return task, context
+
+
+def build_pipeline(config: AppConfig, session_id: str) -> BuiltPipeline:
+    """Construct the default local-audio pipeline and supporting objects.
+
+    Builds the shared backends and assembles a single task bound to the local
+    hardware transport -- the behaviour the CLI has always had.
+    """
+    backends = build_shared_backends(config, session_id)
+    # TODO: config.audio.input_device/output_device are accepted but not yet
+    # mapped to device indices; the OS default device is used.
+    transport = LocalAudioTransport(
+        LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
+    )
+    task, context = assemble_task(backends, config, transport)
+    return BuiltPipeline(
+        task=task,
+        simulator=backends.simulator,
+        session_id=session_id,
+        event_bus=backends.event_bus,
+        control_state=backends.control_state,
         llm_context=context,
+        backends=backends,
     )

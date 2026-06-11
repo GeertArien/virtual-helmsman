@@ -1,68 +1,86 @@
-# Browser audio (`/ws/audio`)
+# Browser audio (WebRTC)
 
-Browser-based microphone capture and audio playback for the dashboard, so the
-helmsman can be used from the web UI instead of the machine's local
-microphone/speakers. Tracked in issue #7; shipped in phases.
+Talk to the helmsman from the **web dashboard** — capture the browser's
+microphone and play the agent's spoken reply in the browser — instead of using
+the machine's local microphone/speakers. Tracked in issue #7.
 
 > **Default behaviour is unchanged.** The agent uses local hardware audio
 > (Pipecat `LocalAudioTransport`) unless `audio.browser_enabled` is `true`.
+> Requires the `webrtc` extra: `pip install -e ".[webrtc]"`.
 
-## Status — phase one (this PR)
+## How it works
 
-A raw 16-bit PCM **loopback** that proves the full browser ↔ backend audio
-path end to end:
+WebRTC via Pipecat's `SmallWebRTCTransport`, so the browser/transport handle
+capture, Opus, jitter buffering, and echo cancellation — the app just does
+signalling and runs the pipeline:
 
 ```
-getUserMedia → AudioWorklet (capture) → PCM16 → /ws/audio ─┐
-speakers ← AudioWorklet (playback) ← PCM16 ← /ws/audio ────┘  (server loops back)
+browser: getUserMedia → RTCPeerConnection ──(SDP offer)──▶ POST /api/webrtc/offer
+                                            ◀──(SDP answer)──
+mic track  ──▶ SmallWebRTCTransport.input()  → STT → LLM → JSON action → TTS
+agent audio ◀── SmallWebRTCTransport.output() ←───────────────────────────┘
 ```
 
-You enable the mic in the browser, speak, and hear yourself — confirming
-capture, streaming, and playback all work. The backend does **not** yet route
-this audio into the STT→LLM→TTS pipeline (that's phase two), so the helmsman
-doesn't respond to it yet.
+The browser plays the inbound agent audio track; the action still drives the
+simulator and publishes the usual transcript / ship-state / metrics events over
+`/ws/events`.
+
+### Shared models, per-connection pipelines
+
+The heavy backends — VAD, turn detector, STT, TTS, the LLM, and the one
+simulator — are built **once at startup** into a `SharedBackends`. Each browser
+connection assembles its own pipeline (`assemble_task`) bound to that
+connection's WebRTC transport, reusing the already-loaded models rather than
+reloading them per connect. In browser mode the process has no single local
+task; it serves the API and runs one pipeline per live connection.
+
+The existing **server-mic toggle** (`/api/control/mic`) still gates audio: it's
+wired into every assembled pipeline as the `MicGate`, so it mutes browser audio
+too. The text chatbox is disabled in browser mode (there's no single local task
+to inject into) — voice is the input.
 
 ### Enable it
 
 ```yaml
 audio:
-  browser_enabled: true   # mounts /ws/audio
-  sample_rate: 16000      # pipeline rate; the negotiated rate for phase two
+  browser_enabled: true
+  ice_servers: ["stun:stun.l.google.com:19302"]   # add a TURN server for cross-NAT
+api:
+  enabled: true     # required — browser audio is served by the control plane
 ```
 
-With it on, `/api/session` reports `browser_audio: true`, and the Monitor page
-shows a **"browser audio"** control (separate from the server-mic toggle in the
-chat panel) with a live level meter.
+With it on, `/api/session` reports `browser_audio: true` and the Monitor page
+shows a **"browser audio"** control. Run the agent (`python -m voice_agent.main`)
+and the dashboard; click the control, grant mic permission, and speak.
 
-### Wire protocol
+## Signalling endpoint
 
-A single WebSocket at `/ws/audio`:
+`POST /api/webrtc/offer`
 
-- **binary** messages — little-endian PCM16 mono audio frames, both directions.
-- **text** messages — a tiny JSON control channel. The client sends
-  `{"type": "hello", "sample_rate": N}` on connect; the server replies
-  `{"type": "ready", "sample_rate": N, "mode": "loopback"}`.
+```jsonc
+// request
+{ "sdp": "<offer SDP>", "type": "offer", "pc_id": "<optional, on renegotiation>" }
+// response (Pipecat SmallWebRTCConnection answer)
+{ "sdp": "<answer SDP>", "type": "answer", "pc_id": "<connection id>" }
+```
 
-Capture happens at the browser `AudioContext`'s native rate (announced in
-`hello`); loopback is rate-agnostic. The worklets live in
-[`frontend/static/`](../frontend/static/) so `audioWorklet.addModule()` can
-fetch them by path.
+Returns **503** when the `webrtc` extra (aiortc) isn't installed. The frontend
+collects ICE candidates before posting the offer (non-trickle), which is fine
+for localhost / same-LAN; add a TURN server in `ice_servers` for traversal
+across networks.
 
-## Phase two (follow-up)
+## Status & caveats
 
-Bind the socket to the pipeline via Pipecat's `FastAPIWebsocketTransport`
-(serializer-less raw PCM) so browser audio reaches the helmsman and its TTS
-reply streams back. Open questions for that work:
+This is the first working version and **needs validation on a real rig** (a
+browser + mic + the GPU models + the `webrtc` extra) — the audio path itself
+can't be exercised in headless CI. Known follow-ups:
 
-- **Lifecycle:** the pipeline is built once at startup around local hardware.
-  Browser audio is per-connection, so this needs either a per-connection
-  pipeline or a transport that can be (re)bound to a live WebSocket — and a
-  decision on sharing the heavy STT/TTS model instances rather than loading
-  them per connection.
-- **Sample-rate conversion** between the browser `AudioContext` rate and the
-  pipeline's 16 kHz.
-- **Barge-in / echo**: the browser plays the bot while the mic is open;
-  `getUserMedia` echo cancellation helps, but VAD/turn behaviour over the
-  network path needs tuning.
-- Unifying the **server-mic toggle** and the browser-audio control once both
-  drive the same pipeline.
+- **Sample-rate conversion** between the WebRTC track rate and the pipeline's
+  16 kHz (the transport resamples; confirm against the STT/TTS backends).
+- **Concurrency:** the model instances are shared across connections; the
+  intended use is one browser at a time (single local user). Concurrent
+  connections sharing the same Pipecat service instances is untested.
+- **Reconnect / renegotiation** edge cases and TURN configuration for remote
+  access.
+- Unifying the server-mic toggle UX with the browser-audio control now that
+  both drive the pipeline.
