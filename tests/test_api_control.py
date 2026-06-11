@@ -194,6 +194,33 @@ def test_control_endpoints_404_when_control_state_missing():
         assert c.post("/api/control/mic", json={"enabled": True}).status_code == 404
 
 
+# ---------- browser-audio mode: control_state without inject_text -----------
+
+
+def test_mic_toggle_works_without_text_injector():
+    """Browser-audio mode passes control_state but no inject_text: the mic
+    toggle must still mount and gate the per-connection MicGates. Regression
+    for the mode being permanently muted with /api/control/mic returning 404."""
+    state = ControlState(mic_enabled=False)
+    app = create_app(event_bus=EventBus(), session=_session(), control_state=state)
+    with TestClient(app) as c:
+        assert c.get("/api/control/state").json() == {"mic_enabled": False}
+        res = c.post("/api/control/mic", json={"enabled": True})
+        assert res.status_code == 200
+        assert state.mic_enabled is True
+
+
+def test_text_send_503_without_text_injector():
+    """No inject_text -> typed commands are unavailable (browser-audio mode),
+    flagged with 503 rather than a silent 404."""
+    state = ControlState(mic_enabled=False)
+    app = create_app(event_bus=EventBus(), session=_session(), control_state=state)
+    with TestClient(app) as c:
+        res = c.post("/api/control/text", json={"text": "come to two seven zero"})
+        assert res.status_code == 503
+        assert "browser-audio" in res.json()["detail"]
+
+
 # ---------- MicGate processor ----------------------------------------------
 
 

@@ -10,7 +10,10 @@ Three routes mounted at ``/api/control``:
   Body ``{text}``. Returns 409 if the mic is still enabled: the two input
   modes are mutually exclusive by design (the user explicitly disables the
   mic to type), so this is a programming error worth flagging loudly rather
-  than letting the LLM see two overlapping turns.
+  than letting the LLM see two overlapping turns. Returns 503 when no
+  ``inject_text`` callable was supplied (browser-audio mode has no single
+  local task to inject into -- voice is the input there), while the mic
+  toggle keeps working: it gates the MicGate in every assembled pipeline.
 
 The router takes a single ``inject_text`` callable instead of leaking the
 :class:`pipecat.pipeline.task.PipelineTask` and :class:`LLMContext` into the
@@ -76,7 +79,7 @@ def create_control_router(
     *,
     state: ControlState,
     event_bus: EventBus,
-    inject_text: TextInjector,
+    inject_text: TextInjector | None,
 ) -> APIRouter:
     """Build the ``/api/control`` router bound to a live ``ControlState``."""
     router = APIRouter(prefix="/api/control", tags=["control"])
@@ -118,6 +121,14 @@ def create_control_router(
         :class:`~voice_agent.api.events.UserTranscriptObserver` only fires
         for STT-produced ``TranscriptionFrame`` s.
         """
+        if inject_text is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Text input is disabled in browser-audio mode -- there is "
+                    "no single local pipeline task to inject into; use voice."
+                ),
+            )
         if state.mic_enabled:
             raise HTTPException(
                 status_code=409,

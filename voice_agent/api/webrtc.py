@@ -113,7 +113,11 @@ class WebRTCManager:
         async def _on_disconnected(_t: Any, _client: Any) -> None:
             await self._cleanup(conn.pc_id)
 
-        task, _context = assemble_task(self._backends, self._config, transport)
+        # gate_mic=False: connecting/disconnecting browser audio in the
+        # dashboard IS the mic control -- no second server-side mute.
+        task, _context = assemble_task(
+            self._backends, self._config, transport, gate_mic=False
+        )
 
         async def _run() -> None:
             runner = PipelineRunner(handle_sigint=False)

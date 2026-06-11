@@ -81,10 +81,12 @@ def create_app(
     omitted, that family of endpoints simply isn't registered (the frontend
     gets a 404 rather than a configuration error).
 
-    ``control_state`` + ``inject_text`` together mount the ``/api/control``
-    router (mic toggle, text-command injection). Both must be supplied; if
-    either is missing the routes are not registered and the frontend gets a
-    404. Decoupling them lets tests pass a list-append stub for
+    ``control_state`` mounts the ``/api/control`` router (mic toggle,
+    text-command injection). ``inject_text`` is optional: without it the
+    mic toggle still works -- it gates the MicGate in every assembled
+    pipeline, including browser-audio ones -- but ``POST /api/control/text``
+    returns 503 (browser-audio mode has no single local task to inject
+    into). Decoupling them lets tests pass a list-append stub for
     ``inject_text`` without standing up a real pipeline task.
 
     Passing ``config_path`` mounts ``/api/config`` (view + edit ``config.yaml``
@@ -132,7 +134,7 @@ def create_app(
         app.include_router(docs_router)
     if review_router is not None:
         app.include_router(review_router)
-    if control_state is not None and inject_text is not None:
+    if control_state is not None:
         app.include_router(
             create_control_router(
                 state=control_state,

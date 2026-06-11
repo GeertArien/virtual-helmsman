@@ -37,6 +37,13 @@ def _providers(device: str) -> list[str]:
     return ["CPUExecutionProvider"]
 
 
+# Loaded onnx-asr models, keyed by (model, device, quantization). Service
+# instances are cheap per-pipeline wrappers (Pipecat FrameProcessors are
+# single-use: once a pipeline is cancelled they drop every frame), but the
+# multi-second ONNX model load must happen once per process.
+_MODEL_CACHE: dict[tuple[str, str, str | None], Any] = {}
+
+
 class ParakeetOnnxSTTService(SegmentedSTTService):
     """Parakeet-TDT speech-to-text via ``onnx-asr`` on ONNX Runtime."""
 
@@ -69,6 +76,11 @@ class ParakeetOnnxSTTService(SegmentedSTTService):
         # Imported lazily so onnx-asr need not be importable to load this module.
         import onnx_asr
 
+        cache_key = (model, device, quantization)
+        cached = _MODEL_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+
         self._log.info(
             "stt_model_loading",
             backend="parakeet_onnx",
@@ -83,6 +95,7 @@ class ParakeetOnnxSTTService(SegmentedSTTService):
         if quantization is not None:
             load_kwargs["quantization"] = quantization
         asr = onnx_asr.load_model(model, **load_kwargs)
+        _MODEL_CACHE[cache_key] = asr
         self._log.info(
             "stt_model_loaded",
             backend="parakeet_onnx",

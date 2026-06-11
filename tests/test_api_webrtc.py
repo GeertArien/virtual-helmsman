@@ -27,6 +27,18 @@ from voice_agent.api.events import EventBus
 from voice_agent.api.webrtc import WebRTCManager, create_webrtc_router
 from voice_agent.config import parse_config
 
+try:  # the "extra missing" tests only make sense without the webrtc extra
+    import aiortc  # noqa: F401
+
+    HAS_WEBRTC_EXTRA = True
+except ImportError:
+    HAS_WEBRTC_EXTRA = False
+
+requires_no_webrtc_extra = pytest.mark.skipif(
+    HAS_WEBRTC_EXTRA,
+    reason="webrtc extra installed; the missing-extra 503 paths can't trigger",
+)
+
 
 def _config() -> Any:
     return parse_config(
@@ -93,11 +105,13 @@ def test_audio_config_custom_ice_servers() -> None:
 # ---------- manager + router --------------------------------------------------
 
 
+@requires_no_webrtc_extra
 def test_manager_available_false_without_extra() -> None:
     # The sandbox has no aiortc, so the WebRTC stack reports unavailable.
     assert _manager().available() is False
 
 
+@requires_no_webrtc_extra
 def test_offer_returns_503_without_extra() -> None:
     app = FastAPI()
     app.include_router(create_webrtc_router(_manager()))
@@ -119,6 +133,7 @@ def test_offer_validates_request_body() -> None:
 # ---------- create_app mount gate ---------------------------------------------
 
 
+@requires_no_webrtc_extra
 def test_create_app_mounts_webrtc_when_manager_supplied() -> None:
     app = create_app(
         event_bus=EventBus(), session=_session(), webrtc_manager=_manager()
