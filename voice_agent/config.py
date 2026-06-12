@@ -3,20 +3,30 @@
 The schema mirrors ``config.yaml`` one-to-one. ``extra="forbid"`` makes typos
 in the config file fail validation rather than being silently ignored.
 
+Shared service blocks -- ``qdrant``, ``lm_studio``, ``langfuse``, ``database``
+-- are configured once at the top level and consumed by every subsystem (the
+LLM backend, the Documents API, and the HITL ingestion pipeline). The
+per-subsystem ``llm`` / ``documents`` / ``review`` blocks keep only what is
+unique to them. The subsystems receive flat *runtime* views (``LlmRuntime`` /
+``DocumentsRuntime`` / ``IngestionRuntime``) assembled from the shared blocks
+via :meth:`AppConfig.llm_runtime` etc., so the backend code reads a single flat
+object without knowing the YAML is split into shared blocks.
+
 Environment overrides (applied before validation):
 
-* ``LLM_BASE_URL``      -> ``llm.base_url``
+* ``LLM_BASE_URL``      -> ``lm_studio.base_url``
 * ``SIMULATOR_BACKEND`` -> ``simulator.backend``
 
-``LLM_API_KEY`` is not a config field: the key is always read at runtime from
-the environment variable named by ``llm.api_key_env`` (default ``LLM_API_KEY``)
-via :meth:`LlmConfig.resolved_api_key`.
+API keys are never config values: the YAML names the *env var* (e.g.
+``lm_studio.api_key_env``) and the secret is read from the environment at
+runtime.
 """
 
 from __future__ import annotations
 
 import copy
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -71,49 +81,86 @@ class TurnConfig(_Base):
     device: str = "cpu"
 
 
+# --- shared service blocks --------------------------------------------------
+
+
+class QdrantConfig(_Base):
+    """Qdrant connection, shared by RAG retrieval, ingestion, and Documents.
+
+    ``url`` unset means no Qdrant: the RAG branch returns a graceful error and
+    the Documents / ingestion endpoints return HTTP 503 until it's set.
+    """
+
+    url: str | None = None
+    api_key_env: str = "QDRANT_API_KEY"
+    collection: str = "maritime_hybrid"
+
+    def resolved_headers(self) -> dict[str, str]:
+        """``api-key`` header from the named env var, or ``{}`` if unset."""
+        return api_key_headers(self.api_key_env)
+
+
+class LmStudioConfig(_Base):
+    """The OpenAI-compatible ``/v1`` server (LM Studio), shared by the LLM
+    backend (chat) and both RAG + ingestion (bge-m3 embeddings)."""
+
+    # Full ``/v1`` base URL, e.g. "http://localhost:1234/v1". Required: the
+    # agent always needs an LLM endpoint.
+    base_url: str
+    api_key_env: str = "LLM_API_KEY"
+    # Dense embedding model id; also the Qdrant dense named-vector name.
+    embedding_model: str = "text-embedding-bge-m3"
+
+    def resolved_api_key(self) -> str | None:
+        """The API key from the env var named by ``api_key_env`` (or ``None``)."""
+        return os.environ.get(self.api_key_env)
+
+
+class LangfuseConfig(_Base):
+    """Optional Langfuse tracing, shared by the LLM backend and ingestion."""
+
+    enabled: bool = False
+    host: str | None = None
+    public_key_env: str = "LANGFUSE_PUBLIC_KEY"
+    secret_key_env: str = "LANGFUSE_SECRET_KEY"
+
+
+class DatabaseConfig(_Base):
+    """The local SQLite store: HITL pending-review batches + the audit log.
+
+    One path shared by the ingestion pipeline (pending batches + ingestion
+    audit rows) and the LLM backend's runtime audit writer, so both land in
+    one ``audit_log`` table.
+    """
+
+    path: str = "./data/ingestion.db"
+
+
 class LlmConfig(_Base):
-    """LLM backend configuration.
+    """LLM backend selection + tuning (connection lives in ``lm_studio``).
 
-    Two backends are supported:
+    Two backends:
 
-    * ``openai_compatible`` -- direct chat-completion call against an
-      OpenAI-shaped HTTP server (e.g. LM Studio). Command parsing only;
-      no RAG. Uses ``base_url`` + ``model`` + ``api_key_env``.
+    * ``openai_compatible`` -- direct chat-completion against the ``lm_studio``
+      server. Command parsing only; no RAG.
     * ``langgraph`` -- in-backend command parsing + hybrid-RAG question
-      answering (LangGraph + LangChain + Langfuse; see
-      ``docs/LANGGRAPH_BACKEND.md``). ``base_url`` is the LM Studio ``/v1``
-      URL (as for ``openai_compatible``); RAG additionally uses ``qdrant_*``
-      + ``embedding_model`` + ``retrieval_top_k`` and honours ``rerank`` /
-      ``expansion``. Optional Langfuse tracing via ``langfuse_*`` and
-      per-turn runtime audit rows via ``audit_*``.
+      answering (LangGraph + LangChain + optional Langfuse; see
+      ``docs/LANGGRAPH_BACKEND.md``). RAG uses the shared ``qdrant`` +
+      ``lm_studio.embedding_model`` blocks and honours ``rerank`` /
+      ``expansion`` / ``retrieval_top_k``.
 
-    Per-field applicability is annotated below. ``timeout_seconds`` applies
-    to both -- raise it for ``langgraph`` since the RAG branch can take
-    ~10-20s.
+    ``timeout_seconds`` applies to both -- raise it for ``langgraph`` since the
+    RAG branch can take ~10-20s.
     """
 
     backend: Literal["openai_compatible", "langgraph"] = "openai_compatible"
-    # Full /v1 base URL for both backends ("http://localhost:1234/v1").
-    base_url: str
+    # The chat model id sent to the lm_studio server. Free-form string so a new
+    # model is a config change, not a code edit. Models evaluated so far for the
+    # helmsman's JSON-structured output: google/gemma-4-e4b,
+    # unsloth/gemma-4-e4b-it, qwen/qwen3.5-9b, ministral-3-8b-instruct-2512,
+    # google/gemma-4-e2b, nvidia/nemotron-3-nano-4b.
+    model: str
     timeout_seconds: float = 30.0
-
-    # --- model ---------------------------------------------------------
-    # The set of LLMs we've evaluated for the helmsman's JSON-structured
-    # output path. Adding another model means appending here -- keeps
-    # config.yaml and the /config UI dropdown in lockstep, and surfaces
-    # typos as a clear ValidationError instead of a silent LM Studio 404.
-    # openai_compatible sends it directly to the chat-completion endpoint;
-    # langgraph applies it to every LLM call (intent classify, command
-    # parse, rerank, RAG answer).
-    model: Literal[
-        "google/gemma-4-e4b",
-        "unsloth/gemma-4-e4b-it",
-        "qwen/qwen3.5-9b",
-        "ministral-3-8b-instruct-2512",
-        "google/gemma-4-e2b",
-        "nvidia/nemotron-3-nano-4b",
-    ]
-    api_key_env: str = "LLM_API_KEY"
     max_retries: int = 1
 
     # --- langgraph only -------------------------------------------------
@@ -123,37 +170,12 @@ class LlmConfig(_Base):
     # chunk_id +/-1 -- solves the Rule-15 chunk-boundary problem). Independent
     # of ``rerank``; any combination is valid.
     expansion: bool = True
-    # Qdrant for the in-backend RAG question branch. ``qdrant_url`` is the
-    # Qdrant REST root (e.g. "http://localhost:6333"); leave it unset to run
-    # command-only (a question turn then returns a graceful error envelope).
-    qdrant_url: str | None = None
-    qdrant_collection: str = "maritime_hybrid"
-    qdrant_api_key_env: str = "QDRANT_API_KEY"
-    # Dense embedding model + Qdrant named vector for the query (must match the
-    # collection's dense vector; pinned to bge-m3 / 1024-dim like ingestion).
-    embedding_model: str = "text-embedding-bge-m3"
     # Hybrid retrieval breadth before rerank/expansion (each prefetch pulls 2x).
     retrieval_top_k: int = 20
-    # Optional Langfuse tracing of every LLM/retrieval step. Keys are read from
-    # the env vars named below (blank/unset -> tracing silently disabled).
-    langfuse_enabled: bool = False
-    langfuse_host: str | None = None
-    langfuse_public_key_env: str = "LANGFUSE_PUBLIC_KEY"
-    langfuse_secret_key_env: str = "LANGFUSE_SECRET_KEY"
     # Per-turn runtime audit rows (command_runtime / question_runtime /
-    # llm_error_runtime) written to the shared SQLite audit log so the Audit
-    # page shows live helmsman activity. ``audit_db_path`` should match
-    # ``review.db_path`` so runtime + ingestion rows share one table.
+    # llm_error_runtime) written to the shared ``database`` SQLite store so the
+    # Audit page shows live helmsman activity alongside ingestion events.
     audit_enabled: bool = False
-    audit_db_path: str = "./data/ingestion.db"
-
-    def resolved_api_key(self) -> str | None:
-        """Return the API key from the env var named by ``api_key_env``."""
-        return os.environ.get(self.api_key_env)
-
-    def resolved_qdrant_headers(self) -> dict[str, str]:
-        """``api-key`` header for Qdrant (langgraph RAG), or ``{}`` if no key set."""
-        return api_key_headers(self.qdrant_api_key_env)
 
 
 class SimulatorRealConfig(_Base):
@@ -215,23 +237,14 @@ class ApiConfig(_Base):
 
 
 class DocumentsConfig(_Base):
-    """Qdrant document management (list + delete). All fields optional --
-    when a field is missing the corresponding endpoint returns HTTP 503 with
-    a "configure documents.<field>" message rather than failing silently.
+    """Qdrant document management (list + delete) -- payload-mapping knobs only.
 
-    The qdrant payload field names are configurable because different
-    ingestion pipelines store metadata under different keys; defaults match
-    the common "document_id / title / source / uploaded_at" convention.
-
-    Uploads live under :class:`ReviewConfig` -- this block is read-only
-    qdrant management (list / delete).
+    The Qdrant connection lives in the shared ``qdrant`` block; this block keeps
+    only the payload field names (different ingestion pipelines store metadata
+    under different keys) and the listing limits. Uploads live under
+    :class:`ReviewConfig` (the HITL ingestion pipeline).
     """
 
-    # qdrant REST base URL (e.g. "http://127.0.0.1:6333"), collection name,
-    # and the env var holding the qdrant API key (if any).
-    qdrant_url: str | None = None
-    qdrant_collection: str | None = None
-    qdrant_api_key_env: str = "QDRANT_API_KEY"
     # Payload field names used to group points into documents.
     document_id_field: str = "document_id"
     title_field: str = "title"
@@ -245,54 +258,102 @@ class DocumentsConfig(_Base):
 
 
 class ReviewConfig(_Base):
-    """In-backend HITL document ingestion + chunk review + audit log.
+    """In-backend HITL document ingestion -- ingestion-specific knobs only.
 
-    Runs the ingestion pipeline in this process: LangChain doc-summary
-    (optional Langfuse tracing), local SQLite for the pending-review batches
-    and the audit log, direct Qdrant collection management + upserts. Serves
-    the five ``/api/review/*`` routes the frontend's Documents / Review /
-    Audit pages call. See ``docs/LOCAL_INGESTION.md``. Requires the
-    ``langgraph`` pip extra (pypdf + LangChain).
-
-    Write endpoints return HTTP 503 with a clear "configure review.<field>"
-    message until ``qdrant_url`` and ``llm_base_url`` are set; the read
-    endpoints (pending list, audit log) work immediately.
+    The SQLite store (``database``), Qdrant (``qdrant``), the LM Studio server +
+    embedding model (``lm_studio``), and Langfuse (``langfuse``) are the shared
+    blocks; this block keeps only the upload-form defaults and the ingestion
+    request timeout. Write endpoints return HTTP 503 until ``qdrant.url`` is set;
+    read endpoints (pending list, audit log) work immediately. Requires the
+    ``langgraph`` pip extra (pypdf + LangChain). See ``docs/LOCAL_INGESTION.md``.
     """
 
-    # SQLite file holding the pending-review batches and the audit log. The
-    # pending table IS the HITL pause state -- batches survive restarts.
-    db_path: str = "./data/ingestion.db"
-    # LM Studio /v1 root for the doc-summary chat call and the bge-m3
-    # embeddings (same server the LLM backend uses).
-    llm_base_url: str | None = None
-    llm_api_key_env: str = "LLM_API_KEY"
-    # Qdrant REST root for collection management + upserts.
-    qdrant_url: str | None = None
-    qdrant_api_key_env: str = "QDRANT_API_KEY"
-    # Dense embedding model; pinned to the collection's 1024-dim vector.
-    embedding_model: str = "text-embedding-bge-m3"
     # Pre-fill values for the upload form / defaults when the form omits them.
     default_document_type: str = "PDF"
-    default_collection_name: str = "maritime_hybrid"
     default_categories: str = "algemeen"
     default_chunking_strategy: Literal[
         "paragraph_aware", "fixed_size"
     ] = "paragraph_aware"
     # Request timeout (seconds) for outbound calls to Qdrant / LM Studio.
     request_timeout_seconds: float = 60.0
-    # Optional Langfuse tracing of the doc-summary call. Field names mirror
-    # LlmConfig so the same handler factory serves both.
-    langfuse_enabled: bool = False
-    langfuse_host: str | None = None
-    langfuse_public_key_env: str = "LANGFUSE_PUBLIC_KEY"
-    langfuse_secret_key_env: str = "LANGFUSE_SECRET_KEY"
+
+
+# --- runtime facades --------------------------------------------------------
+# Flat views the subsystems consume, assembled from the shared + per-subsystem
+# blocks. Keeping the consumer code on a flat object means the YAML can split
+# the settings into shared blocks without rippling through every backend.
+
+
+@dataclass
+class LlmRuntime:
+    """Flat config the LLM backend (openai_compatible / langgraph) reads."""
+
+    backend: str
+    base_url: str
+    model: str
+    timeout_seconds: float
+    max_retries: int
+    rerank: bool
+    expansion: bool
+    retrieval_top_k: int
+    qdrant_url: str | None
+    qdrant_collection: str
+    embedding_model: str
+    langfuse_enabled: bool
+    langfuse_host: str | None
+    langfuse_public_key_env: str
+    langfuse_secret_key_env: str
+    audit_enabled: bool
+    audit_db_path: str
+    api_key_env: str
+    qdrant_api_key_env: str
+
+    def resolved_api_key(self) -> str | None:
+        return os.environ.get(self.api_key_env)
+
+    def resolved_qdrant_headers(self) -> dict[str, str]:
+        return api_key_headers(self.qdrant_api_key_env)
+
+
+@dataclass
+class DocumentsRuntime:
+    """Flat config the Documents (qdrant list/delete) router reads."""
+
+    qdrant_url: str | None
+    qdrant_collection: str
+    qdrant_api_key_env: str
+    document_id_field: str
+    title_field: str
+    source_field: str
+    uploaded_at_field: str
+    scroll_limit: int
+    request_timeout_seconds: float
+
+
+@dataclass
+class IngestionRuntime:
+    """Flat config the HITL ingestion engine + review router read."""
+
+    db_path: str
+    request_timeout_seconds: float
+    llm_base_url: str
+    llm_api_key_env: str
+    qdrant_url: str | None
+    qdrant_api_key_env: str
+    embedding_model: str
+    default_document_type: str
+    default_collection_name: str
+    default_categories: str
+    default_chunking_strategy: str
+    langfuse_enabled: bool
+    langfuse_host: str | None
+    langfuse_public_key_env: str
+    langfuse_secret_key_env: str
 
     def resolved_llm_api_key(self) -> str | None:
-        """LM Studio API key for the ingestion pipeline, or ``None`` if unset."""
         return os.environ.get(self.llm_api_key_env)
 
     def resolved_qdrant_headers(self) -> dict[str, str]:
-        """``api-key`` header for Qdrant, or ``{}`` if no key set."""
         return api_key_headers(self.qdrant_api_key_env)
 
 
@@ -304,6 +365,10 @@ class AppConfig(_Base):
     vad: VadConfig = Field(default_factory=VadConfig)
     turn_detection: TurnConfig = Field(default_factory=TurnConfig)
     llm: LlmConfig
+    lm_studio: LmStudioConfig
+    qdrant: QdrantConfig = Field(default_factory=QdrantConfig)
+    langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
+    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     simulator: SimulatorConfig = Field(default_factory=SimulatorConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
@@ -311,13 +376,71 @@ class AppConfig(_Base):
     documents: DocumentsConfig = Field(default_factory=DocumentsConfig)
     review: ReviewConfig = Field(default_factory=ReviewConfig)
 
+    def llm_runtime(self) -> LlmRuntime:
+        """Assemble the flat LLM-backend config from the shared blocks."""
+        return LlmRuntime(
+            backend=self.llm.backend,
+            base_url=self.lm_studio.base_url,
+            model=self.llm.model,
+            timeout_seconds=self.llm.timeout_seconds,
+            max_retries=self.llm.max_retries,
+            rerank=self.llm.rerank,
+            expansion=self.llm.expansion,
+            retrieval_top_k=self.llm.retrieval_top_k,
+            qdrant_url=self.qdrant.url,
+            qdrant_collection=self.qdrant.collection,
+            embedding_model=self.lm_studio.embedding_model,
+            langfuse_enabled=self.langfuse.enabled,
+            langfuse_host=self.langfuse.host,
+            langfuse_public_key_env=self.langfuse.public_key_env,
+            langfuse_secret_key_env=self.langfuse.secret_key_env,
+            audit_enabled=self.llm.audit_enabled,
+            audit_db_path=self.database.path,
+            api_key_env=self.lm_studio.api_key_env,
+            qdrant_api_key_env=self.qdrant.api_key_env,
+        )
+
+    def documents_runtime(self) -> DocumentsRuntime:
+        """Assemble the flat Documents-router config from the shared blocks."""
+        return DocumentsRuntime(
+            qdrant_url=self.qdrant.url,
+            qdrant_collection=self.qdrant.collection,
+            qdrant_api_key_env=self.qdrant.api_key_env,
+            document_id_field=self.documents.document_id_field,
+            title_field=self.documents.title_field,
+            source_field=self.documents.source_field,
+            uploaded_at_field=self.documents.uploaded_at_field,
+            scroll_limit=self.documents.scroll_limit,
+            request_timeout_seconds=self.documents.request_timeout_seconds,
+        )
+
+    def ingestion_runtime(self) -> IngestionRuntime:
+        """Assemble the flat ingestion-engine config from the shared blocks."""
+        return IngestionRuntime(
+            db_path=self.database.path,
+            request_timeout_seconds=self.review.request_timeout_seconds,
+            llm_base_url=self.lm_studio.base_url,
+            llm_api_key_env=self.lm_studio.api_key_env,
+            qdrant_url=self.qdrant.url,
+            qdrant_api_key_env=self.qdrant.api_key_env,
+            embedding_model=self.lm_studio.embedding_model,
+            default_document_type=self.review.default_document_type,
+            default_collection_name=self.qdrant.collection,
+            default_categories=self.review.default_categories,
+            default_chunking_strategy=self.review.default_chunking_strategy,
+            langfuse_enabled=self.langfuse.enabled,
+            langfuse_host=self.langfuse.host,
+            langfuse_public_key_env=self.langfuse.public_key_env,
+            langfuse_secret_key_env=self.langfuse.secret_key_env,
+        )
+
 
 def _apply_env_overrides(data: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of ``data`` with env-var overrides applied."""
     data = copy.deepcopy(data)
     base_url = os.environ.get("LLM_BASE_URL")
     if base_url:
-        data.setdefault("llm", {})["base_url"] = base_url
+        data.setdefault("lm_studio", {})["base_url"] = base_url
     sim_backend = os.environ.get("SIMULATOR_BACKEND")
     if sim_backend:
         data.setdefault("simulator", {})["backend"] = sim_backend

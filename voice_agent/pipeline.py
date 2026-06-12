@@ -207,9 +207,10 @@ def build_shared_backends(config: AppConfig, session_id: str) -> SharedBackends:
 
     # LLM backend is chosen by config.llm.backend: openai_compatible (LM Studio
     # + JSON-schema response_format, command-only) or langgraph (in-backend
-    # command + RAG questions). Both slot into the same pipeline position.
+    # command + RAG questions). Both slot into the same pipeline position. The
+    # backend reads a flat LlmRuntime assembled from the shared config blocks.
     def llm_factory() -> FrameProcessor:
-        return create_llm(config.llm)
+        return create_llm(config.llm_runtime())
 
     # Warm the model caches / downloads at startup rather than on the first
     # connection: the STT factory populates the module-level model cache, the

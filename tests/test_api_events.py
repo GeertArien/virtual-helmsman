@@ -227,7 +227,7 @@ def test_default_app_config_has_api_disabled() -> None:
     minimal = {
         "stt": {"model": "x"},
         "tts": {"voice": "y"},
-        "llm": {"base_url": "http://x", "model": "nvidia/nemotron-3-nano-4b"},
+        "llm": {"model": "nvidia/nemotron-3-nano-4b"}, "lm_studio": {"base_url": "http://x"},
     }
     cfg = parse_config(minimal)
     assert cfg.api.enabled is False
@@ -240,7 +240,7 @@ def test_api_config_round_trips() -> None:
     raw = {
         "stt": {"model": "x"},
         "tts": {"voice": "y"},
-        "llm": {"base_url": "http://x", "model": "nvidia/nemotron-3-nano-4b"},
+        "llm": {"model": "nvidia/nemotron-3-nano-4b"}, "lm_studio": {"base_url": "http://x"},
         "api": {
             "enabled": True,
             "host": "0.0.0.0",
@@ -262,7 +262,7 @@ def test_api_config_rejects_unknown_field() -> None:
     raw = {
         "stt": {"model": "x"},
         "tts": {"voice": "y"},
-        "llm": {"base_url": "http://x", "model": "nvidia/nemotron-3-nano-4b"},
+        "llm": {"model": "nvidia/nemotron-3-nano-4b"}, "lm_studio": {"base_url": "http://x"},
         "api": {"enabld": True},  # typo
     }
     with pytest.raises(Exception):

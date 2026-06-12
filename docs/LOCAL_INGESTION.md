@@ -69,30 +69,37 @@ it.
 
 ## Configuration
 
+Ingestion reads the shared `database` / `lm_studio` / `qdrant` / `langfuse`
+blocks (the same ones the LLM backend and Documents page use); `review` keeps
+only the upload-form defaults:
+
 ```yaml
-review:
-  db_path: ./data/ingestion.db         # pending batches + audit log
-  llm_base_url: http://localhost:1234/v1   # LM Studio (summary + embeddings)
-  llm_api_key_env: LLM_API_KEY
-  qdrant_url: http://localhost:6333
-  qdrant_api_key_env: QDRANT_API_KEY
+database:
+  path: ./data/ingestion.db            # pending batches + audit log
+lm_studio:
+  base_url: http://localhost:1234/v1   # summary + embeddings
+  api_key_env: LLM_API_KEY
   embedding_model: text-embedding-bge-m3
+qdrant:
+  url: http://localhost:6333
+  api_key_env: QDRANT_API_KEY
+  collection: maritime_hybrid          # the ingestion default; per-upload override still wins
+langfuse:                              # optional tracing of the doc-summary call
+  enabled: false
+  host:                                # blank = Langfuse Cloud
+review:
   default_document_type: PDF
-  default_collection_name: maritime_hybrid
   default_categories: algemeen
   default_chunking_strategy: paragraph_aware
-  # optional Langfuse tracing of the doc-summary call:
-  langfuse_enabled: false
-  langfuse_host:                       # blank = Langfuse Cloud
 ```
 
-Write endpoints return 503 with a "configure `review.<field>`" message until
-`qdrant_url` and `llm_base_url` are set; the read endpoints (pending list,
-audit log) work immediately.
+Write endpoints return 503 with a "configure `qdrant.url`" message until
+`qdrant.url` is set; the read endpoints (pending list, audit log) work
+immediately.
 
-Set `db_path` to the same file as `llm.audit_db_path` so the runtime helmsman's
-`command_runtime` / `question_runtime` rows and the ingestion rows share one
-audit log — the Audit page then shows both.
+Because the runtime helmsman's audit writer and the ingestion pipeline both use
+`database.path`, the `command_runtime` / `question_runtime` rows and the
+ingestion rows share one audit log automatically — the Audit page shows both.
 
 ## Differences from the n8n contract (intentional)
 

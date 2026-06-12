@@ -31,7 +31,7 @@ from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
 from voice_agent.api.review import create_review_router
 from voice_agent.api.webrtc import WebRTCManager, create_webrtc_router
-from voice_agent.config import DocumentsConfig, ReviewConfig
+from voice_agent.config import DocumentsRuntime, IngestionRuntime
 from voice_agent.logging_setup import get_logger
 
 
@@ -62,8 +62,8 @@ def create_app(
     event_bus: EventBus,
     session: SessionInfo,
     cors_allow_origins: list[str] | None = None,
-    documents: DocumentsConfig | None = None,
-    review: ReviewConfig | None = None,
+    documents: DocumentsRuntime | None = None,
+    review: IngestionRuntime | None = None,
     inject_text: TextInjector | None = None,
     config_path: Path | None = None,
     llm_model: str | None = None,
