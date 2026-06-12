@@ -43,11 +43,8 @@ simulator:
     initial_heading: 0
     initial_engine_order: stop
     log_commands: true
-audio:
-  input_device: default
-  output_device: default
-  sample_rate: 16000
-  browser_enabled: true            # WebRTC browser audio: talk to the helmsman from the web UI (needs the `webrtc` extra; see docs/BROWSER_AUDIO.md)
+audio:                             # voice is always browser audio over WebRTC (needs api.enabled + the `webrtc` extra; see docs/BROWSER_AUDIO.md)
+  sample_rate: 16000               # STT input rate for the offline benchmark harness (scripts/bench_stt.py)
   ice_servers: ["stun:stun.l.google.com:19302"]   # STUN/TURN for WebRTC ICE
 logging:
   level: info

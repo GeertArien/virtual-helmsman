@@ -28,7 +28,6 @@ from voice_agent.logging_setup import configure_logging, get_logger, new_session
 from voice_agent.pipeline import (
     BuiltPipeline,
     assemble_text_task,
-    build_pipeline,
     build_shared_backends,
     build_text_injector,
 )
@@ -45,7 +44,7 @@ def _session_info(config: AppConfig, session_id: str, started_at: str) -> Sessio
         turn_backend=config.turn_detection.backend,
         simulator_backend=config.simulator.backend,
         llm_model=config.llm.model,
-        browser_audio=config.audio.browser_enabled,
+        browser_audio=True,
     )
 
 
@@ -59,9 +58,8 @@ async def _maybe_start_api(
     """Start the FastAPI server alongside the pipeline if configured.
 
     ``webrtc_manager`` mounts the browser-audio (WebRTC) signalling endpoint.
-    The chatbox text-injection route targets ``built.task`` -- the local-audio
-    pipeline in the default mode, the standing text-only pipeline in
-    browser-audio mode.
+    The chatbox text-injection route targets ``built.task`` -- the standing
+    text-only pipeline.
     """
     if not config.api.enabled or built.event_bus is None:
         return None
@@ -73,7 +71,6 @@ async def _maybe_start_api(
         cors_allow_origins=config.api.cors_allow_origins,
         documents=config.documents,
         review=config.review,
-        control_state=built.control_state,
         inject_text=(
             build_text_injector(built.task, built.llm_context)
             if built.task is not None
@@ -102,41 +99,28 @@ async def _run(config_path: str) -> None:
     configure_logging(config.logging, session_id)
     log = get_logger("pipeline")
     log.info("session_start", session_id=session_id, config_path=config_path)
-
-    if config.audio.browser_enabled and config.api.enabled:
-        await _run_browser(config, config_path, session_id, log)
-    else:
-        await _run_local(config, config_path, session_id, log)
+    await _serve(config, config_path, session_id, log)
 
 
-async def _run_local(
+async def _serve(
     config: AppConfig, config_path: str, session_id: str, log: Any
 ) -> None:
-    """Default path: one pipeline bound to local hardware audio, run to completion."""
-    built = build_pipeline(config, session_id)
-    api = await _maybe_start_api(config, built, config_path)
-    runner = PipelineRunner(handle_sigint=True)
-    try:
-        await runner.run(built.task)
-    finally:
-        if api is not None:
-            await api.stop()
-        # Release simulator resources (UDP sockets / threads on the real backend).
-        await built.simulator.close()
-        log.info("session_end", session_id=session_id)
+    """Serve the control plane and run a pipeline per WebRTC browser connection.
 
-
-async def _run_browser(
-    config: AppConfig, config_path: str, session_id: str, log: Any
-) -> None:
-    """Browser-audio path: serve the API and run a pipeline per WebRTC connection.
-
-    The heavy models are loaded once into shared backends; each browser
-    connection assembles its own pipeline against them. Voice flows through
-    those per-connection pipelines (the dashboard's browser-audio control is
-    the mic on/off); typed chatbox commands flow through a **standing
-    text-only pipeline** that runs for the whole session.
+    Voice input/output is the browser: the heavy models are loaded once into
+    shared backends, and each browser connection assembles its own pipeline
+    against them. Typed chatbox commands flow through a **standing text-only
+    pipeline** that runs for the whole session. Both require ``api.enabled``;
+    without it the agent has no inputs (we warn but still serve so a misconfig
+    is obvious rather than a silent exit).
     """
+    if not config.api.enabled:
+        log.warning(
+            "api_disabled",
+            hint="Browser audio and the chatbox both need api.enabled: true; "
+            "the agent has no inputs until it is set.",
+        )
+
     backends = build_shared_backends(config, session_id)
     manager = WebRTCManager(backends, config)
     if not manager.available():
@@ -153,7 +137,6 @@ async def _run_browser(
         simulator=backends.simulator,
         session_id=session_id,
         event_bus=backends.event_bus,
-        control_state=backends.control_state,
         llm_context=text_context,
         backends=backends,
     )
@@ -162,11 +145,12 @@ async def _run_browser(
     runner = PipelineRunner(handle_sigint=True)
     try:
         # The text task idles between typed commands (idle timeout disabled)
-        # and serves until SIGINT, replacing the previous bare Event().wait().
+        # and serves until SIGINT.
         await runner.run(text_task)
     finally:
         if api is not None:
             await api.stop()
+        # Release simulator resources (UDP sockets / threads on the real backend).
         await backends.simulator.close()
         log.info("session_end", session_id=session_id)
 

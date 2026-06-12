@@ -22,8 +22,10 @@ requires-python = ">=3.11,<3.14"
 
 dependencies = [
     # Orchestration + first-party backends (Silero VAD, Kokoro/Piper TTS,
-    # Whisper STT, OpenAI-compatible LLM, local smart-turn, local audio).
-    "pipecat-ai[silero,kokoro,piper,whisper,openai,local-smart-turn,local]==1.2.1",
+    # Whisper STT, OpenAI-compatible LLM, local smart-turn). Voice audio is the
+    # browser (WebRTC) path -- see the `webrtc` extra; there is no local-audio
+    # transport.
+    "pipecat-ai[silero,kokoro,piper,whisper,openai,local-smart-turn]==1.2.1",
     # Config, logging.
     "pydantic==2.11.0",
     "pyyaml==6.0.2",
@@ -38,7 +40,8 @@ dependencies = [
     # In-process control/observability API for the frontend (WebSocket + HTTP).
     "fastapi==0.115.4",
     "uvicorn[standard]==0.32.1",
-    # Async HTTP client used by /api/documents to forward to n8n and qdrant.
+    # Async HTTP client used by /api/documents and the ingestion pipeline to
+    # talk to qdrant + LM Studio over plain HTTP.
     # python-multipart is required for FastAPI's UploadFile / Form handling.
     "httpx==0.27.2",
     "python-multipart==0.0.12",
@@ -68,9 +71,11 @@ langgraph = [
     # PDF text extraction for the HITL ingestion pipeline.
     "pypdf>=5.0",
 ]
-# Browser audio (issue #7): WebRTC transport for the dashboard, so the helmsman
-# can be driven from the web UI (mic capture + agent-audio playback) over
-# WebRTC. Pulls aiortc via pipecat's webrtc extra. See docs/BROWSER_AUDIO.md.
+# Browser audio (WebRTC): the only voice path -- the helmsman is driven from
+# the web UI (mic capture + agent-audio playback) over WebRTC. Pulls aiortc via
+# pipecat's webrtc extra. Packaged as an extra so the headless test/CI install
+# stays light (the live audio path can't run in CI anyway), but it is required
+# for any voice input at runtime. See docs/BROWSER_AUDIO.md.
 webrtc = ["pipecat-ai[webrtc]==1.2.1"]
 # CUDA 12.x runtime + cuDNN 9.x for onnxruntime-gpu, as venv-local pip wheels
 # (no system-wide CUDA toolkit). Required on the NVIDIA client; the DLLs are
