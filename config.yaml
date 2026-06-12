@@ -17,22 +17,26 @@ turn_detection:
   device: cpu
 llm:
   backend: langgraph              # in-backend helmsman (needs the `langgraph` extra)
-  base_url: http://localhost:1234/v1   # LM Studio /v1 (chat + bge-m3 embeddings)
-  model: unsloth/gemma-4-e4b-it
-  api_key_env: LLM_API_KEY
+  model: unsloth/gemma-4-e4b-it   # any model id the lm_studio server serves
   timeout_seconds: 30
   max_retries: 1
   rerank: true
   expansion: true                 # RAG adjacent-chunk expansion (Qdrant scroll); independent of rerank
-  qdrant_url: http://localhost:6333
-  qdrant_collection: maritime_hybrid
-  qdrant_api_key_env: QDRANT_API_KEY
-  embedding_model: text-embedding-bge-m3
   retrieval_top_k: 20
-  langfuse_enabled: false         # true + LANGFUSE_* keys -> trace every LLM/retrieval step
-  langfuse_host:                  # blank = Langfuse Cloud; set for a self-hosted instance
   audit_enabled: true             # write command_runtime / question_runtime rows to the audit log
-  audit_db_path: ./data/ingestion.db   # shared with review.db_path
+lm_studio:                        # the OpenAI-compatible /v1 server: chat + bge-m3 embeddings
+  base_url: http://localhost:1234/v1
+  api_key_env: LLM_API_KEY
+  embedding_model: text-embedding-bge-m3
+qdrant:                           # shared by RAG retrieval, ingestion, and the Documents page
+  url: http://localhost:6333
+  api_key_env: QDRANT_API_KEY
+  collection: maritime_hybrid
+langfuse:                         # optional tracing of LLM/retrieval steps + the doc-summary call
+  enabled: false                  # true + LANGFUSE_* keys to trace
+  host:                           # blank = Langfuse Cloud; set for a self-hosted instance
+database:
+  path: ./data/ingestion.db       # SQLite: HITL pending batches + the audit log (runtime + ingestion)
 simulator:
   backend: mock
   real:
@@ -57,27 +61,15 @@ api:
   port: 8765
   cors_allow_origins:
   - '*'
-documents:
-  qdrant_url: http://127.0.0.1:6333
-  qdrant_collection: maritime_hybrid
-  qdrant_api_key_env: QDRANT_API_KEY
+documents:                         # Qdrant connection is the shared `qdrant:` block; these are payload-mapping knobs
   document_id_field: hitl_batch_id
   title_field: filename
   source_field: document_type
   uploaded_at_field: upload_timestamp
   scroll_limit: 10000
   request_timeout_seconds: 30
-review:
-  # In-backend HITL ingestion (see docs/LOCAL_INGESTION.md).
-  db_path: ./data/ingestion.db     # pending review batches + audit log; shared with llm.audit_db_path
-  llm_base_url: http://localhost:1234/v1   # LM Studio (doc summary + embeddings)
-  llm_api_key_env: LLM_API_KEY
-  qdrant_url: http://127.0.0.1:6333
-  qdrant_api_key_env: QDRANT_API_KEY
-  embedding_model: text-embedding-bge-m3
+review:                            # In-backend HITL ingestion (see docs/LOCAL_INGESTION.md); store/qdrant/lm_studio are shared blocks
   default_document_type: PDF
-  default_collection_name: maritime_hybrid
   default_categories: algemeen
   default_chunking_strategy: paragraph_aware
   request_timeout_seconds: 60
-  langfuse_enabled: false          # true -> trace the doc-summary call

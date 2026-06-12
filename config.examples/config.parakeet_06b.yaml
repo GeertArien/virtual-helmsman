@@ -25,11 +25,12 @@ turn_detection:
 
 llm:
   backend: openai_compatible
-  base_url: http://localhost:1234/v1
   model: unsloth/gemma-4-e4b-it
-  api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
+lm_studio:
+  base_url: http://localhost:1234/v1
+  api_key_env: LLM_API_KEY
 
 simulator:
   backend: mock

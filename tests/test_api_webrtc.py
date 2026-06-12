@@ -45,10 +45,8 @@ def _config() -> Any:
         {
             "stt": {"model": "nvidia/parakeet-tdt-1.1b"},
             "tts": {"voice": "af_bella"},
-            "llm": {
-                "base_url": "http://llm:1234/v1",
-                "model": "nvidia/nemotron-3-nano-4b",
-            },
+            "llm": {"model": "nvidia/nemotron-3-nano-4b"},
+            "lm_studio": {"base_url": "http://llm:1234/v1"},
         }
     )
 
@@ -82,7 +80,7 @@ def test_audio_config_ice_defaults() -> None:
         {
             "stt": {"model": "m"},
             "tts": {"voice": "v"},
-            "llm": {"base_url": "http://x/v1", "model": "nvidia/nemotron-3-nano-4b"},
+            "llm": {"model": "nvidia/nemotron-3-nano-4b"}, "lm_studio": {"base_url": "http://x/v1"},
         }
     )
     assert cfg.audio.ice_servers == ["stun:stun.l.google.com:19302"]
@@ -93,7 +91,7 @@ def test_audio_config_custom_ice_servers() -> None:
         {
             "stt": {"model": "m"},
             "tts": {"voice": "v"},
-            "llm": {"base_url": "http://x/v1", "model": "nvidia/nemotron-3-nano-4b"},
+            "llm": {"model": "nvidia/nemotron-3-nano-4b"}, "lm_studio": {"base_url": "http://x/v1"},
             "audio": {"ice_servers": ["stun:example:3478"]},
         }
     )

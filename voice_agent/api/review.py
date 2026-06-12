@@ -30,7 +30,7 @@ import httpx
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from voice_agent.config import ReviewConfig
+from voice_agent.config import IngestionRuntime
 from voice_agent.ingestion.engine import IngestionEngine
 from voice_agent.logging_setup import get_logger
 
@@ -48,24 +48,24 @@ class AuditEventRequest(BaseModel):
     resultaat: str = Field(min_length=1, max_length=500)
 
 
-def _missing(field: str) -> HTTPException:
-    """503 telling the user which config field to populate."""
+def _missing(block: str, field: str) -> HTTPException:
+    """503 telling the user which shared config field to populate."""
     return HTTPException(
         status_code=503,
         detail=(
-            f"review.{field} is not configured. Set it in config.yaml under "
-            "the `review:` block to enable this endpoint."
+            f"{block}.{field} is not configured. Set it in config.yaml under "
+            f"the `{block}:` block to enable this endpoint."
         ),
     )
 
 
 def create_review_router(
-    cfg: ReviewConfig,
+    cfg: IngestionRuntime,
     *,
     llm_model: str | None = None,
     engine: IngestionEngine | None = None,
 ) -> APIRouter:
-    """Build the /api/review router bound to a :class:`ReviewConfig`.
+    """Build the /api/review router bound to an :class:`IngestionRuntime`.
 
     ``llm_model`` is the LM Studio chat-model identifier used as the default
     for the doc-summary call (threaded from ``LlmConfig.model`` so ingestion
@@ -83,10 +83,9 @@ def create_review_router(
     router._http_client = eng  # type: ignore[attr-defined]
 
     def _require_local_fields() -> None:
+        # lm_studio.base_url is required, so qdrant.url is the only gate.
         if not cfg.qdrant_url:
-            raise _missing("qdrant_url")
-        if not cfg.llm_base_url:
-            raise _missing("llm_base_url")
+            raise _missing("qdrant", "url")
 
     # ---- UPLOAD --------------------------------------------------------
     @router.post("/upload", status_code=202)

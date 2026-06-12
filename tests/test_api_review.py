@@ -26,7 +26,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from voice_agent.api.review import create_review_router
-from voice_agent.config import ReviewConfig
+from voice_agent.config import IngestionRuntime, ReviewConfig
 from voice_agent.ingestion.engine import IngestionEngine
 
 # Long enough to chunk into multiple pieces, repeated sentences keep the
@@ -83,11 +83,23 @@ class _StubClient:
         return None
 
 
-def _cfg(tmp_path: Path) -> ReviewConfig:
-    return ReviewConfig(
+def _cfg(tmp_path: Path, *, qdrant_url: str | None = "http://qd:6333") -> IngestionRuntime:
+    return IngestionRuntime(
         db_path=str(tmp_path / "ingestion.db"),
+        request_timeout_seconds=60.0,
         llm_base_url="http://lm:1234/v1",
-        qdrant_url="http://qd:6333",
+        llm_api_key_env="LLM_API_KEY",
+        qdrant_url=qdrant_url,
+        qdrant_api_key_env="QDRANT_API_KEY",
+        embedding_model="text-embedding-bge-m3",
+        default_document_type="PDF",
+        default_collection_name="maritime_hybrid",
+        default_categories="algemeen",
+        default_chunking_strategy="paragraph_aware",
+        langfuse_enabled=False,
+        langfuse_host=None,
+        langfuse_public_key_env="LANGFUSE_PUBLIC_KEY",
+        langfuse_secret_key_env="LANGFUSE_SECRET_KEY",
     )
 
 
@@ -293,13 +305,13 @@ def test_finalize_qdrant_failure_returns_502(tmp_path: Path) -> None:
 
 
 def test_upload_503_until_configured(tmp_path: Path) -> None:
-    cfg = ReviewConfig(db_path=str(tmp_path / "i.db"))
+    cfg = _cfg(tmp_path, qdrant_url=None)
     app = FastAPI()
     app.include_router(create_review_router(cfg))
     with TestClient(app) as client:
         res = _upload(client)
         assert res.status_code == 503
-        assert "review.qdrant_url" in res.json()["detail"]
+        assert "qdrant.url" in res.json()["detail"]
         # Read-only endpoints still work unconfigured.
         assert client.get("/api/review/pending").status_code == 200
         assert client.get("/api/review/audit-log").status_code == 200
@@ -384,15 +396,19 @@ def test_create_review_router_exposes_engine(tmp_path: Path) -> None:
 
 
 def test_review_config_defaults() -> None:
+    # The shared store/qdrant/lm_studio/langfuse blocks moved out of
+    # ReviewConfig; only the ingestion-specific knobs remain.
     cfg = ReviewConfig()
-    assert cfg.db_path == "./data/ingestion.db"
-    assert cfg.embedding_model == "text-embedding-bge-m3"
-    assert cfg.langfuse_enabled is False
+    assert cfg.default_document_type == "PDF"
+    assert cfg.default_chunking_strategy == "paragraph_aware"
     assert not hasattr(cfg, "backend")  # n8n removed; review is local-only
+    assert not hasattr(cfg, "qdrant_url")  # qdrant connection is the shared block
 
 
-def test_review_config_qdrant_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    cfg = ReviewConfig()
+def test_ingestion_runtime_qdrant_headers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _cfg(tmp_path)
     monkeypatch.delenv("QDRANT_API_KEY", raising=False)
     assert cfg.resolved_qdrant_headers() == {}
     monkeypatch.setenv("QDRANT_API_KEY", "k")
