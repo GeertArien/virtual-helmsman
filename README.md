@@ -191,9 +191,9 @@ cp .env.example .env   # then fill in the keys you need
 
 | Env var | Used by | Config field | How it's sent |
 |---------|---------|--------------|----------------|
-| `LLM_API_KEY` | LM Studio `/v1` — chat (both LLM backends) + bge-m3 embeddings (`langgraph` RAG + ingestion) | `llm.api_key_env` / `review.llm_api_key_env` | OpenAI `Authorization: Bearer` (local LM Studio usually needs none) |
-| `QDRANT_API_KEY` | Documents page proxy, `langgraph` RAG retrieval, and the ingestion upserts | `documents.qdrant_api_key_env` / `llm.qdrant_api_key_env` / `review.qdrant_api_key_env` | `api-key` header |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Optional Langfuse tracing (LLM turns + doc-summary) | `llm.langfuse_*_key_env` / `review.langfuse_*_key_env` | Langfuse SDK (self-host or cloud) |
+| `LLM_API_KEY` | LM Studio `/v1` — chat (both LLM backends) + bge-m3 embeddings (`langgraph` RAG + ingestion) | `lm_studio.api_key_env` | OpenAI `Authorization: Bearer` (local LM Studio usually needs none) |
+| `QDRANT_API_KEY` | Documents page proxy, `langgraph` RAG retrieval, and the ingestion upserts | `qdrant.api_key_env` | `api-key` header |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` | Optional Langfuse tracing (LLM turns + doc-summary) | `langfuse.public_key_env` / `langfuse.secret_key_env` | Langfuse SDK (self-host or cloud) |
 
 Leave a key blank to send no credential (fine for unauthenticated local
 services).
@@ -228,21 +228,29 @@ optional extra:
 pip install -e ".[langgraph]"
 ```
 
+The connection settings live in the shared `lm_studio` / `qdrant` / `langfuse`
+/ `database` blocks (consumed by RAG, the Documents page, and ingestion alike);
+`llm` keeps only the backend tuning:
+
 ```yaml
 llm:
   backend: langgraph
-  base_url: http://localhost:1234/v1   # LM Studio /v1 (chat + bge-m3 embeddings)
-  model: unsloth/gemma-4-e4b-it
+  model: unsloth/gemma-4-e4b-it        # any id the lm_studio server serves
   rerank: true
   expansion: true
-  qdrant_url: http://localhost:6333    # omit to run command-only
-  qdrant_collection: maritime_hybrid
-  embedding_model: text-embedding-bge-m3
   retrieval_top_k: 20
-  langfuse_enabled: false              # true + LANGFUSE_* keys to trace
-  langfuse_host:                       # blank = Langfuse Cloud; set for a self-hosted instance, e.g. http://localhost:3000
   audit_enabled: true                  # write command_runtime / question_runtime rows to the audit log
-  audit_db_path: ./data/ingestion.db   # shared with review.db_path so the Audit page shows runtime + ingestion
+lm_studio:
+  base_url: http://localhost:1234/v1   # /v1 server: chat + bge-m3 embeddings
+  embedding_model: text-embedding-bge-m3
+qdrant:
+  url: http://localhost:6333           # omit to run command-only
+  collection: maritime_hybrid
+langfuse:
+  enabled: false                       # true + LANGFUSE_* keys to trace
+  host:                                # blank = Langfuse Cloud; or http://localhost:3000
+database:
+  path: ./data/ingestion.db            # the Audit page shows runtime + ingestion rows from here
 ```
 
 `rerank: false` skips the LLM-as-reranker step in the RAG branch (faster,
@@ -254,9 +262,9 @@ row to the shared audit log (the Audit page then shows live helmsman activity
 alongside ingestion events).
 
 Langfuse is open-source and free to self-host (Docker/Helm). Point
-`langfuse_host` at your instance and set the `LANGFUSE_PUBLIC_KEY` /
+`langfuse.host` at your instance and set the `LANGFUSE_PUBLIC_KEY` /
 `LANGFUSE_SECRET_KEY` env vars (names overridable via
-`langfuse_public_key_env` / `langfuse_secret_key_env`); leave `langfuse_host`
+`langfuse.public_key_env` / `langfuse.secret_key_env`); leave `langfuse.host`
 blank to use Langfuse Cloud.
 
 Qdrant and the embedding endpoint are reached over plain HTTP, so no
@@ -279,14 +287,15 @@ agent parses).
 ```yaml
 llm:
   backend: openai_compatible
-  base_url: http://localhost:1234/v1   # e.g. LM Studio's local server
   model: unsloth/gemma-4-e4b-it
-  api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
+lm_studio:
+  base_url: http://localhost:1234/v1   # e.g. LM Studio's local server
+  api_key_env: LLM_API_KEY
 ```
 
-Set the key via the env var named by `api_key_env` (default
+Set the key via the env var named by `lm_studio.api_key_env` (default
 `LLM_API_KEY`); servers that need no key still work (a placeholder key
 is sent).
 
@@ -436,27 +445,28 @@ Four pages:
 - **Config** (`/config`) — view, edit, and reload `config.yaml`
   in-place.
 
-Enable the control plane and the integration routes in `config.yaml`:
+Enable the control plane and point the shared blocks at your services in
+`config.yaml` — the Documents page and the in-backend HITL ingestion both read
+`qdrant` + `lm_studio`, so there's nothing per-page to configure:
 
 ```yaml
 api:
   enabled: true
-documents:
-  qdrant_url: http://127.0.0.1:6333
-  qdrant_collection: maritime_hybrid
-  qdrant_api_key_env: QDRANT_API_KEY
-review:                                  # in-backend HITL ingestion
-  db_path: ./data/ingestion.db
-  llm_base_url: http://localhost:1234/v1
-  qdrant_url: http://127.0.0.1:6333
+qdrant:
+  url: http://127.0.0.1:6333
+  collection: maritime_hybrid
+lm_studio:
+  base_url: http://localhost:1234/v1
+database:
+  path: ./data/ingestion.db              # HITL pending batches + audit log
 ```
 
 The review pipeline runs in this backend (LangChain doc-summary, local
 SQLite for pending batches + audit log, direct Qdrant upserts — requires the
 `langgraph` extra). See [`docs/LOCAL_INGESTION.md`](docs/LOCAL_INGESTION.md).
 
-Each `documents.*` and `review.*` field is optional — endpoints return
-HTTP 503 with a "configure `<field>`" message until you set them, so the
+`qdrant.url` is optional — the Documents and write-ingestion endpoints return
+HTTP 503 with a "configure `qdrant.url`" message until it's set, so the
 frontend boots before all integrations are wired. Then
 `cd frontend && npm install && npm run dev`. See
 [`frontend/README.md`](frontend/README.md) for details.

@@ -46,11 +46,13 @@ _VALID_CONFIG: dict[str, Any] = {
     },
     "tts": {"backend": "kokoro", "voice": "af_bella", "device": "cuda"},
     "llm": {
-        "base_url": "http://localhost:1234/v1",
         "model": "nvidia/nemotron-3-nano-4b",
-        "api_key_env": "LLM_API_KEY",
         "timeout_seconds": 30.0,
         "max_retries": 1,
+    },
+    "lm_studio": {
+        "base_url": "http://localhost:1234/v1",
+        "api_key_env": "LLM_API_KEY",
     },
 }
 
@@ -81,7 +83,7 @@ def test_get_config_returns_disk_contents(tmp_path: Path) -> None:
     assert res.status_code == 200
     body = res.json()
     assert body["stt"]["backend"] == "parakeet_onnx"
-    assert body["llm"]["base_url"] == "http://localhost:1234/v1"
+    assert body["lm_studio"]["base_url"] == "http://localhost:1234/v1"
 
 
 def test_get_config_does_not_apply_env_overrides(
@@ -95,7 +97,7 @@ def test_get_config_does_not_apply_env_overrides(
     client = _build_app_with_config(cfg_path)
     res = client.get("/api/config")
     assert res.status_code == 200
-    assert res.json()["llm"]["base_url"] == "http://localhost:1234/v1"
+    assert res.json()["lm_studio"]["base_url"] == "http://localhost:1234/v1"
 
 
 def test_get_config_500_when_file_missing(tmp_path: Path) -> None:
@@ -127,7 +129,8 @@ def test_get_config_schema_returns_appconfig_schema(tmp_path: Path) -> None:
     # Top-level AppConfig sections must all be present so the frontend
     # can render every group.
     expected_sections = {
-        "stt", "tts", "vad", "turn_detection", "llm", "simulator",
+        "stt", "tts", "vad", "turn_detection", "llm", "lm_studio",
+        "qdrant", "langfuse", "database", "simulator",
         "audio", "logging", "api", "documents", "review",
     }
     assert set(schema["properties"].keys()) == expected_sections
@@ -165,7 +168,7 @@ def test_put_config_does_not_persist_env_overrides(
 
     with cfg_path.open() as fh:
         on_disk = yaml.safe_load(fh)
-    assert on_disk["llm"]["base_url"] == "http://localhost:1234/v1"
+    assert on_disk["lm_studio"]["base_url"] == "http://localhost:1234/v1"
 
 
 def test_put_config_422_on_invalid_literal(tmp_path: Path) -> None:

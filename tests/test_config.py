@@ -18,10 +18,8 @@ def _minimal() -> dict[str, Any]:
     return {
         "stt": {"model": "nvidia/parakeet-tdt-1.1b"},
         "tts": {"voice": "af_bella"},
-        "llm": {
-            "base_url": "http://llm-server:8000/v1",
-            "model": "nvidia/nemotron-3-nano-4b",
-        },
+        "llm": {"model": "nvidia/nemotron-3-nano-4b"},
+        "lm_studio": {"base_url": "http://llm-server:8000/v1"},
     }
 
 
@@ -51,7 +49,7 @@ def test_load_config_missing_file_raises() -> None:
 def test_env_override_llm_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_BASE_URL", "http://override:9000/v1")
     config = parse_config(_minimal())
-    assert config.llm.base_url == "http://override:9000/v1"
+    assert config.lm_studio.base_url == "http://override:9000/v1"
 
 
 def test_env_override_simulator_backend(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -63,21 +61,21 @@ def test_env_override_simulator_backend(monkeypatch: pytest.MonkeyPatch) -> None
 def test_resolved_api_key_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_API_KEY", "secret-token")
     config = parse_config(_minimal())
-    assert config.llm.resolved_api_key() == "secret-token"
+    assert config.lm_studio.resolved_api_key() == "secret-token"
 
 
-def test_llm_qdrant_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_qdrant_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     config = parse_config(_minimal())
     monkeypatch.delenv("QDRANT_API_KEY", raising=False)
-    assert config.llm.resolved_qdrant_headers() == {}
+    assert config.qdrant.resolved_headers() == {}
     monkeypatch.setenv("QDRANT_API_KEY", "qd-secret")
-    assert config.llm.resolved_qdrant_headers() == {"api-key": "qd-secret"}
+    assert config.qdrant.resolved_headers() == {"api-key": "qd-secret"}
 
 
-def test_llm_audit_defaults_off() -> None:
+def test_audit_defaults_off() -> None:
     config = parse_config(_minimal())
     assert config.llm.audit_enabled is False
-    assert config.llm.audit_db_path == "./data/ingestion.db"
+    assert config.database.path == "./data/ingestion.db"
 
 
 def test_n8n_backend_rejected() -> None:

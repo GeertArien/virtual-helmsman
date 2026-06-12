@@ -18,7 +18,7 @@ from fastapi.testclient import TestClient
 from voice_agent.api.app import SessionInfo, create_app
 from voice_agent.api.documents import _group_documents
 from voice_agent.api.events import EventBus
-from voice_agent.config import DocumentsConfig
+from voice_agent.config import DocumentsConfig, DocumentsRuntime
 
 
 # ---------- helpers --------------------------------------------------------
@@ -37,34 +37,49 @@ def _session() -> SessionInfo:
     )
 
 
-# ---------- DocumentsConfig defaults --------------------------------------
+def _docs_runtime(**over: Any) -> DocumentsRuntime:
+    """A DocumentsRuntime with sane defaults; override per test."""
+    base: dict[str, Any] = dict(
+        qdrant_url=None,
+        qdrant_collection="maritime_hybrid",
+        qdrant_api_key_env="QDRANT_API_KEY",
+        document_id_field="document_id",
+        title_field="title",
+        source_field="source",
+        uploaded_at_field="uploaded_at",
+        scroll_limit=10000,
+        request_timeout_seconds=30.0,
+    )
+    base.update(over)
+    return DocumentsRuntime(**base)
 
 
-def test_documents_config_defaults_disable_endpoints():
-    cfg = DocumentsConfig()
+# ---------- Documents config defaults --------------------------------------
+
+
+def test_documents_runtime_defaults_disable_endpoints():
+    # The endpoints are gated on qdrant.url, which defaults to unset.
+    cfg = _docs_runtime()
     assert cfg.qdrant_url is None
-    assert cfg.qdrant_collection is None
     assert cfg.document_id_field == "document_id"
     assert cfg.scroll_limit == 10000
-    # Upload moved to ReviewConfig -- DocumentsConfig must not carry it.
-    assert not hasattr(cfg, "n8n_upload_webhook")
 
 
 def test_documents_config_extra_forbid_rejects_typos():
     with pytest.raises(Exception):
-        DocumentsConfig(qdrant_uri="http://x")  # type: ignore[call-arg]
+        DocumentsConfig(scroll_limitt=1)  # type: ignore[call-arg]
 
 
 # ---------- 503 when not configured ---------------------------------------
 
 
 def test_list_returns_503_when_qdrant_unconfigured():
-    cfg = DocumentsConfig()
+    cfg = _docs_runtime()
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
     with TestClient(app) as c:
         res = c.get("/api/documents")
     assert res.status_code == 503
-    assert "qdrant_url" in res.json()["detail"]
+    assert "qdrant.url" in res.json()["detail"]
 
 
 def test_upload_route_is_gone():
@@ -74,7 +89,7 @@ def test_upload_route_is_gone():
     so a POST returns 405 Method Not Allowed; either 404 or 405 means
     there's no upload handler under /api/documents anymore.
     """
-    cfg = DocumentsConfig()
+    cfg = _docs_runtime()
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
     with TestClient(app) as c:
         res = c.post(
@@ -85,19 +100,19 @@ def test_upload_route_is_gone():
 
 
 def test_delete_returns_503_when_qdrant_unconfigured():
-    cfg = DocumentsConfig()
+    cfg = _docs_runtime()
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
     with TestClient(app) as c:
         res = c.delete("/api/documents/some-id")
     assert res.status_code == 503
-    assert "qdrant_url" in res.json()["detail"]
+    assert "qdrant.url" in res.json()["detail"]
 
 
 # ---------- _group_documents ----------------------------------------------
 
 
 def test_group_documents_rolls_up_chunks_by_document_id():
-    cfg = DocumentsConfig()
+    cfg = _docs_runtime()
     points = [
         {"payload": {"document_id": "a", "title": "Alpha", "source": "a.pdf",
                      "uploaded_at": "2026-05-01"}},
@@ -116,7 +131,7 @@ def test_group_documents_rolls_up_chunks_by_document_id():
 
 
 def test_group_documents_handles_missing_payload_keys():
-    cfg = DocumentsConfig()
+    cfg = _docs_runtime()
     points = [
         {"payload": {"document_id": "x"}},  # title/source missing
         {"payload": None},                   # no payload at all
@@ -131,7 +146,7 @@ def test_group_documents_handles_missing_payload_keys():
 
 
 def test_group_documents_uses_configured_field_names():
-    cfg = DocumentsConfig(
+    cfg = _docs_runtime(
         document_id_field="doc",
         title_field="name",
         source_field="origin",
@@ -206,7 +221,7 @@ def test_list_documents_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     # Patch AsyncClient so the router picks up the stub on creation.
     monkeypatch.setattr("voice_agent.api.documents.httpx.AsyncClient", lambda **_: stub)
 
-    cfg = DocumentsConfig(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
+    cfg = _docs_runtime(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
     with TestClient(app) as c:
         res = c.get("/api/documents")
@@ -229,7 +244,7 @@ def test_delete_document_counts_then_deletes(monkeypatch: pytest.MonkeyPatch) ->
     )
     monkeypatch.setattr("voice_agent.api.documents.httpx.AsyncClient", lambda **_: stub)
 
-    cfg = DocumentsConfig(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
+    cfg = _docs_runtime(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
     with TestClient(app) as c:
         res = c.delete("/api/documents/doc-42")
@@ -247,7 +262,7 @@ def test_delete_document_returns_404_when_no_chunks(monkeypatch: pytest.MonkeyPa
     stub.queue(_FakeResponse(200, {"result": {"count": 0}}))
     monkeypatch.setattr("voice_agent.api.documents.httpx.AsyncClient", lambda **_: stub)
 
-    cfg = DocumentsConfig(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
+    cfg = _docs_runtime(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
     with TestClient(app) as c:
         res = c.delete("/api/documents/missing-id")
@@ -263,7 +278,7 @@ def test_qdrant_unreachable_returns_502(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         "voice_agent.api.documents.httpx.AsyncClient", lambda **_: _BoomClient()
     )
-    cfg = DocumentsConfig(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
+    cfg = _docs_runtime(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
     with TestClient(app) as c:
         res = c.get("/api/documents")
