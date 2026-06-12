@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 
 from voice_agent.api.app import SessionInfo, create_app
 from voice_agent.api.events import EventBus
-from voice_agent.api.webrtc import WebRTCManager, create_webrtc_router
+from voice_agent.api.webrtc import _Connection, WebRTCManager, create_webrtc_router
 from voice_agent.config import parse_config
 
 try:  # the "extra missing" tests only make sense without the webrtc extra
@@ -156,3 +156,86 @@ def test_offer_request_requires_sdp_and_type(body: dict[str, Any]) -> None:
     app = FastAPI()
     app.include_router(create_webrtc_router(_manager()))
     assert TestClient(app).post("/api/webrtc/offer", json=body).status_code == 422
+
+
+# ---------- connection teardown (no aiortc needed) ----------------------------
+#
+# These exercise the per-connection bookkeeping directly with stub tasks, so the
+# record lifecycle is covered without a live peer connection.
+
+
+class _PipelineTaskStub:
+    """Stands in for a Pipecat PipelineTask -- async cancel()."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    async def cancel(self) -> None:
+        self.cancelled = True
+
+
+class _RunnerTaskStub:
+    """Stands in for the asyncio runner task -- sync cancel()."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+class _ConnStub:
+    def __init__(self) -> None:
+        self.disconnected = False
+
+    async def disconnect(self) -> None:
+        self.disconnected = True
+
+
+async def test_cleanup_unknown_pc_id_is_noop() -> None:
+    # A disconnect that fires for an already-removed (or never-registered)
+    # connection must not raise -- guards the startup/teardown race.
+    await _manager()._cleanup("ghost")
+
+
+async def test_cleanup_cancels_tasks_and_drops_record() -> None:
+    mgr = _manager()
+    pipeline_task = _PipelineTaskStub()
+    runner_task = _RunnerTaskStub()
+    mgr._connections["pc1"] = _Connection(
+        connection=_ConnStub(),
+        pipeline_task=pipeline_task,
+        runner_task=runner_task,
+    )
+    await mgr._cleanup("pc1")
+    assert "pc1" not in mgr._connections
+    assert pipeline_task.cancelled is True
+    assert runner_task.cancelled is True
+
+
+async def test_cleanup_tolerates_record_without_tasks() -> None:
+    # The window between registering the record and _start_pipeline filling in
+    # the tasks: a disconnect here must still drop the record cleanly.
+    mgr = _manager()
+    mgr._connections["pc1"] = _Connection(connection=_ConnStub())
+    await mgr._cleanup("pc1")
+    assert mgr._connections == {}
+
+
+async def test_close_disconnects_and_clears_all() -> None:
+    mgr = _manager()
+    conn_a, conn_b = _ConnStub(), _ConnStub()
+    mgr._connections["a"] = _Connection(
+        connection=conn_a,
+        pipeline_task=_PipelineTaskStub(),
+        runner_task=_RunnerTaskStub(),
+    )
+    mgr._connections["b"] = _Connection(
+        connection=conn_b,
+        pipeline_task=_PipelineTaskStub(),
+        runner_task=_RunnerTaskStub(),
+    )
+    await mgr.close()
+    assert conn_a.disconnected is True
+    assert conn_b.disconnected is True
+    assert mgr._connections == {}

@@ -26,6 +26,7 @@ clear 503).
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
@@ -47,6 +48,21 @@ class OfferRequest(BaseModel):
     restart_pc: bool = False
 
 
+@dataclass
+class _Connection:
+    """One live browser connection: the peer connection plus its pipeline tasks.
+
+    ``pipeline_task`` and ``runner_task`` are filled in by
+    :meth:`WebRTCManager._start_pipeline` immediately after the record is
+    registered; both stay ``None`` only for the brief window before the
+    pipeline is wired, and :meth:`WebRTCManager._cleanup` tolerates that.
+    """
+
+    connection: Any
+    pipeline_task: Any = None
+    runner_task: "asyncio.Task[None] | None" = None
+
+
 class WebRTCManager:
     """Owns the per-connection WebRTC pipelines over one set of shared backends."""
 
@@ -54,9 +70,8 @@ class WebRTCManager:
         self._backends = backends
         self._config = config
         self._log = get_logger("api.webrtc")
-        # pc_id -> (connection, pipeline task, runner task)
-        self._connections: dict[str, Any] = {}
-        self._tasks: dict[str, asyncio.Task[None]] = {}
+        # pc_id -> the connection and its pipeline/runner tasks.
+        self._connections: dict[str, _Connection] = {}
 
     def available(self) -> bool:
         """True when the optional WebRTC stack (aiortc) is importable."""
@@ -82,28 +97,32 @@ class WebRTCManager:
 
         # Renegotiation of an existing peer connection.
         if offer.pc_id and offer.pc_id in self._connections:
-            conn = self._connections[offer.pc_id]
+            conn = self._connections[offer.pc_id].connection
             await conn.renegotiate(
                 sdp=offer.sdp, type=offer.type, restart_pc=offer.restart_pc
             )
             return conn.get_answer()
 
-        # New connection.
+        # New connection. Register the record *before* starting the pipeline so
+        # an ``on_client_disconnected`` that fires during startup always finds
+        # it (and the per-connection tasks are filled in by _start_pipeline).
         conn = SmallWebRTCConnection(self._config.audio.ice_servers)
         await conn.initialize(sdp=offer.sdp, type=offer.type)
-        await self._start_pipeline(conn)
-        self._connections[conn.pc_id] = conn
+        record = _Connection(connection=conn)
+        self._connections[conn.pc_id] = record
+        self._start_pipeline(record)
         self._log.info("webrtc_connection_opened", pc_id=conn.pc_id)
         return conn.get_answer()
 
-    async def _start_pipeline(self, conn: Any) -> None:
-        """Build a transport for ``conn`` and run its pipeline in the background."""
+    def _start_pipeline(self, record: _Connection) -> None:
+        """Build a transport for ``record`` and run its pipeline in the background."""
         from pipecat.pipeline.runner import PipelineRunner
         from pipecat.transports.base_transport import TransportParams
         from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 
         from voice_agent.pipeline import assemble_task
 
+        conn = record.connection
         transport = SmallWebRTCTransport(
             webrtc_connection=conn,
             params=TransportParams(audio_in_enabled=True, audio_out_enabled=True),
@@ -116,6 +135,7 @@ class WebRTCManager:
         # Connecting/disconnecting browser audio in the dashboard IS the mic
         # control -- the pipeline carries no server-side mute.
         task, _context = assemble_task(self._backends, self._config, transport)
+        record.pipeline_task = task
 
         async def _run() -> None:
             runner = PipelineRunner(handle_sigint=False)
@@ -126,29 +146,26 @@ class WebRTCManager:
             except Exception as exc:  # noqa: BLE001 - one bad peer must not crash others
                 self._log.error("webrtc_pipeline_error", pc_id=conn.pc_id, error=str(exc))
 
-        runner_task = asyncio.create_task(_run())
-        self._tasks[conn.pc_id] = runner_task
-        # Keep the PipelineTask so we can cancel it on disconnect.
-        self._connections[conn.pc_id + ":task"] = task  # type: ignore[assignment]
+        record.runner_task = asyncio.create_task(_run())
 
     async def _cleanup(self, pc_id: str) -> None:
         """Tear down one connection's pipeline; leave the shared models loaded."""
-        self._connections.pop(pc_id, None)
-        task = self._connections.pop(pc_id + ":task", None)
-        if task is not None:
-            await task.cancel()
-        runner_task = self._tasks.pop(pc_id, None)
-        if runner_task is not None:
-            runner_task.cancel()
+        record = self._connections.pop(pc_id, None)
+        if record is None:
+            return
+        if record.pipeline_task is not None:
+            await record.pipeline_task.cancel()
+        if record.runner_task is not None:
+            record.runner_task.cancel()
         self._log.info("webrtc_connection_closed", pc_id=pc_id)
 
     async def close(self) -> None:
         """Close every live connection (called on app shutdown)."""
-        for pc_id in [k for k in self._connections if not k.endswith(":task")]:
-            conn = self._connections.get(pc_id)
-            if conn is not None:
+        for pc_id in list(self._connections):
+            record = self._connections.get(pc_id)
+            if record is not None:
                 try:
-                    await conn.disconnect()
+                    await record.connection.disconnect()
                 except Exception:  # noqa: BLE001
                     pass
             await self._cleanup(pc_id)
