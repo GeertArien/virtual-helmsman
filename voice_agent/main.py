@@ -69,8 +69,8 @@ async def _maybe_start_api(
             config, built.session_id, datetime.now(timezone.utc).isoformat()
         ),
         cors_allow_origins=config.api.cors_allow_origins,
-        documents=config.documents,
-        review=config.review,
+        documents=config.documents_runtime(),
+        review=config.ingestion_runtime(),
         inject_text=(
             build_text_injector(built.task, built.llm_context)
             if built.task is not None

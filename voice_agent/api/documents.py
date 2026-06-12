@@ -26,7 +26,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 
 from voice_agent import qdrant
-from voice_agent.config import DocumentsConfig
+from voice_agent.config import DocumentsRuntime
 from voice_agent.logging_setup import get_logger
 
 
@@ -35,13 +35,13 @@ def _missing(field: str) -> HTTPException:
     return HTTPException(
         status_code=503,
         detail=(
-            f"documents.{field} is not configured. Set it in config.yaml under "
-            "the `documents:` block to enable this endpoint."
+            f"qdrant.{field} is not configured. Set it in config.yaml under "
+            "the `qdrant:` block to enable this endpoint."
         ),
     )
 
 
-def _qdrant_headers(cfg: DocumentsConfig) -> dict[str, str]:
+def _qdrant_headers(cfg: DocumentsRuntime) -> dict[str, str]:
     """JSON content-type plus an ``api-key`` if the configured env var is set."""
     return {
         "content-type": "application/json",
@@ -51,7 +51,7 @@ def _qdrant_headers(cfg: DocumentsConfig) -> dict[str, str]:
 
 async def _qdrant_post(
     client: httpx.AsyncClient,
-    cfg: DocumentsConfig,
+    cfg: DocumentsRuntime,
     url: str,
     json_body: dict[str, Any],
 ) -> dict[str, Any]:
@@ -77,7 +77,7 @@ async def _qdrant_post(
 
 
 def _group_documents(
-    points: list[dict[str, Any]], cfg: DocumentsConfig
+    points: list[dict[str, Any]], cfg: DocumentsRuntime
 ) -> list[dict[str, Any]]:
     """Roll up scrolled points into one row per distinct ``document_id``.
 
@@ -106,8 +106,8 @@ def _group_documents(
     return sorted(by_id.values(), key=lambda r: (r.get("title") or r["document_id"]).lower())
 
 
-def create_documents_router(cfg: DocumentsConfig) -> APIRouter:
-    """Build the /api/documents router bound to a :class:`DocumentsConfig`.
+def create_documents_router(cfg: DocumentsRuntime) -> APIRouter:
+    """Build the /api/documents router bound to a :class:`DocumentsRuntime`.
 
     The router closes over ``cfg`` (and a long-lived :class:`httpx.AsyncClient`)
     so the FastAPI app stays stateless from the caller's perspective.
@@ -123,9 +123,9 @@ def create_documents_router(cfg: DocumentsConfig) -> APIRouter:
     @router.get("")
     async def list_documents() -> dict[str, list[dict[str, Any]]]:
         if not cfg.qdrant_url:
-            raise _missing("qdrant_url")
+            raise _missing("url")
         if not cfg.qdrant_collection:
-            raise _missing("qdrant_collection")
+            raise _missing("collection")
 
         # Scroll the whole collection in pages of 256, capped at scroll_limit.
         page_size = 256
@@ -162,9 +162,9 @@ def create_documents_router(cfg: DocumentsConfig) -> APIRouter:
     @router.delete("/{document_id}")
     async def delete_document(document_id: str) -> dict[str, Any]:
         if not cfg.qdrant_url:
-            raise _missing("qdrant_url")
+            raise _missing("url")
         if not cfg.qdrant_collection:
-            raise _missing("qdrant_collection")
+            raise _missing("collection")
 
         # Match every point whose payload[document_id_field] == document_id.
         filter_clause = {
