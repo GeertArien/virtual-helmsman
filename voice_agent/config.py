@@ -24,6 +24,7 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent.backends.simulator.base import EngineOrder
+from voice_agent.qdrant import api_key_headers
 
 
 class _Base(BaseModel):
@@ -152,8 +153,7 @@ class LlmConfig(_Base):
 
     def resolved_qdrant_headers(self) -> dict[str, str]:
         """``api-key`` header for Qdrant (langgraph RAG), or ``{}`` if no key set."""
-        key = os.environ.get(self.qdrant_api_key_env)
-        return {"api-key": key} if key else {}
+        return api_key_headers(self.qdrant_api_key_env)
 
 
 class SimulatorRealConfig(_Base):
@@ -293,8 +293,7 @@ class ReviewConfig(_Base):
 
     def resolved_qdrant_headers(self) -> dict[str, str]:
         """``api-key`` header for Qdrant, or ``{}`` if no key set."""
-        key = os.environ.get(self.qdrant_api_key_env)
-        return {"api-key": key} if key else {}
+        return api_key_headers(self.qdrant_api_key_env)
 
 
 class AppConfig(_Base):

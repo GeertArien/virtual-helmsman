@@ -24,9 +24,15 @@ from typing import Any
 
 import httpx
 
-DENSE_VECTOR_NAME = "text-embedding-bge-m3"
-DENSE_VECTOR_SIZE = 1024
-SPARSE_VECTOR_NAME = "bm25"
+# Vector schema + BM25 model live in the shared Qdrant helper so ingestion
+# (which creates the collection) and retrieval (which queries it) can't drift.
+from voice_agent.qdrant import (
+    BM25_MODEL,
+    DENSE_VECTOR_NAME,
+    DENSE_VECTOR_SIZE,
+    SPARSE_VECTOR_NAME,
+    collection_url,
+)
 
 
 async def ensure_collection(
@@ -41,7 +47,7 @@ async def ensure_collection(
     Returns ``True`` if the collection was created, ``False`` if it already
     existed. Index creation only runs on creation, mirroring the n8n branch.
     """
-    base = f"{qdrant_url.rstrip('/')}/collections/{collection}"
+    base = collection_url(qdrant_url, collection)
     res = await client.get(f"{base}/exists", headers=headers or None)
     res.raise_for_status()
     if (res.json().get("result") or {}).get("exists"):
@@ -135,7 +141,7 @@ def build_points(
                     DENSE_VECTOR_NAME: embedding,
                     SPARSE_VECTOR_NAME: {
                         "text": chunk["text"],
-                        "model": "qdrant/bm25",
+                        "model": BM25_MODEL,
                         "options": {"avg_len": avg_len},
                     },
                 },
@@ -153,6 +159,6 @@ async def upsert_points(
     headers: dict[str, str] | None = None,
 ) -> None:
     """PUT the assembled points; raises on a non-2xx response."""
-    url = f"{qdrant_url.rstrip('/')}/collections/{collection}/points?wait=true"
+    url = f"{collection_url(qdrant_url, collection)}/points?wait=true"
     res = await client.put(url, json={"points": points}, headers=headers or None)
     res.raise_for_status()
