@@ -6,9 +6,9 @@
     onUploaded = () => {}
   }: { open?: boolean; onUploaded?: () => void } = $props();
 
-  /** Default values mirror the backend's ReviewConfig pre-fills. The
-   *  webhook treats Document_Type / Collection_Name as required; Categories
-   *  and Chunking_Strategy fall back to webhook defaults when blank. */
+  /** Default values mirror the backend's ReviewConfig pre-fills. The backend
+   *  treats Document_Type / Collection_Name as required; Categories and
+   *  Chunking_Strategy fall back to the backend defaults when blank. */
   const DEFAULTS: Required<UploadFields> = {
     document_type: 'PDF',
     collection_name: 'maritime_hybrid',
@@ -166,7 +166,7 @@
       <div class="actions">
         <button type="button" class="ghost" onclick={close} disabled={phase.kind === 'uploading'}>Close</button>
         <button type="submit" class="primary" disabled={!canSubmit}>
-          {phase.kind === 'uploading' ? 'Uploading…' : 'Upload → n8n'}
+          {phase.kind === 'uploading' ? 'Uploading…' : 'Upload'}
         </button>
       </div>
     </form>

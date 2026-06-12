@@ -22,7 +22,7 @@ export interface AssistantReplyEvent extends BaseEvent {
   text: string;
 }
 
-/** The n8n action vocabulary. `details` shape is action-specific (see
+/** The helmsman action vocabulary. `details` shape is action-specific (see
  *  `JsonActionProcessor._publish_turn_events` on the backend). */
 export interface ActionDispatchedEvent extends BaseEvent {
   kind: 'action_dispatched';
@@ -75,8 +75,8 @@ export interface SessionInfo {
   llm_model: string;
   subscribers: number;
   events_dropped: number;
-  /** True when the backend mounts /ws/audio (audio.browser_enabled), i.e. the
-   *  dashboard can capture the mic and play audio in the browser. */
+  /** Always true: browser audio (WebRTC) is the only voice path, so the
+   *  dashboard always offers browser-side mic capture + playback. */
   browser_audio?: boolean;
 }
 
@@ -203,7 +203,7 @@ export async function deleteDocument(documentId: string): Promise<DeleteResponse
   return (await res.json()) as DeleteResponse;
 }
 
-// --- Review (n8n HITL chunk-review proxy) -----------------------------------
+// --- Review (in-backend HITL chunk-review proxy) ----------------------------
 
 /** A chunk awaiting human review. `text` is the chunk's content; `metadata`
  *  is whatever the ingestion pipeline attached. The UI surfaces a subset
@@ -214,8 +214,8 @@ export interface ReviewChunk {
   metadata: Record<string, unknown>;
 }
 
-/** One batch of chunks waiting for review. The backend strips the n8n
- *  `resume_url` -- submit decisions via `submitDecisions(batch_id, ...)`. */
+/** One batch of chunks waiting for review. The backend tracks pending batches
+ *  in local SQLite -- submit decisions via `submitDecisions(batch_id, ...)`. */
 export interface PendingBatch {
   batch_id: string;
   filename: string;
@@ -236,20 +236,20 @@ export interface ReviewUploadResponse {
 }
 
 /** Per-chunk decision. `approve` is the default for omitted chunks; the
- *  backend forwards this verbatim to the n8n resume URL. */
+ *  backend applies this to the pending batch identified by `batch_id`. */
 export interface ChunkDecision {
   chunk_id: string;
   action: 'approve' | 'reject' | 'edit';
-  /** Required when action is "edit". Must be ≥ 50 chars after trim or n8n
-   *  silently drops the chunk -- enforce on the client. */
+  /** Required when action is "edit". Must be ≥ 50 chars after trim or the
+   *  backend rejects the chunk -- enforce on the client. */
   edited_text?: string;
   /** Free-text reason, optional. Not persisted in v1. */
   reason?: string;
 }
 
-/** POST /api/review/upload -- forward a file + metadata to the n8n ingestion
- *  workflow. Returns 202-equivalent ack; the batch appears in the pending
- *  list after a few seconds of background chunking. */
+/** POST /api/review/upload -- forward a file + metadata to the in-backend
+ *  ingestion pipeline. Returns 202-equivalent ack; the batch appears in the
+ *  pending list after a few seconds of background chunking. */
 export interface UploadFields {
   document_type?: string;
   collection_name?: string;
@@ -283,7 +283,8 @@ export async function fetchPending(): Promise<PendingResponse> {
 }
 
 /** POST /api/review/{batch_id}/resume -- submit decisions for a batch. The
- *  backend looks up the n8n resume URL by re-fetching the pending list. */
+ *  backend applies them to the pending batch and finalizes (embed + upsert to
+ *  Qdrant). */
 export async function submitDecisions(
   batchId: string,
   decisions: ChunkDecision[]
@@ -299,9 +300,9 @@ export async function submitDecisions(
   if (!res.ok) throw await readError(res);
 }
 
-// --- Audit log (n8n datatable feed proxied through /api/review) -------------
+// --- Audit log (local SQLite audit feed proxied through /api/review) --------
 
-/** One row from the `audit-log-maritime` datatable. `resultaat` is a free-text
+/** One row from the backend's `audit_log` table. `resultaat` is a free-text
  *  Dutch summary (e.g. "Succes — HITL batch ... → approved=8 / edited=1 ...").
  *  v1 ingestion writes three patterns: success, all-rejected, PDF-extract-fail. */
 export interface AuditEntry {
@@ -320,7 +321,7 @@ export interface AuditLogResponse {
 }
 
 export interface AuditLogQuery {
-  /** Max rows to return. n8n caps at 500. */
+  /** Max rows to return. The backend caps at 500. */
   limit?: number;
   /** Exact-match filter on the `actie` column (e.g. "ingestie_hitl"). */
   actie?: string;
@@ -345,7 +346,7 @@ export async function fetchAuditLog(
 }
 
 /** One UI-side audit row to write via POST /api/review/audit-event. All three
- *  fields are required, non-empty, ≤500 chars (enforced backend + n8n side). */
+ *  fields are required, non-empty, ≤500 chars (enforced backend-side). */
 export interface AuditEventInput {
   document_naam: string;
   actie: string;
@@ -353,12 +354,12 @@ export interface AuditEventInput {
 }
 
 /** POST /api/review/audit-event -- write a single audit row for a UI event the
- *  n8n workflow can't observe itself (e.g. the AI Act Art. 50 transparency
- *  acknowledgement). The backend proxies it to `<n8n>/webhook/audit-event`.
+ *  backend can't observe itself (e.g. the AI Act Art. 50 transparency
+ *  acknowledgement). The backend writes it to the local audit log.
  *
  *  Callers should treat this as **best-effort** and not block on it: the
- *  acknowledgement gate must succeed even when n8n is down. Await/catch only
- *  if you genuinely want to observe the failure. */
+ *  acknowledgement gate must succeed even when the backend is down. Await/catch
+ *  only if you genuinely want to observe the failure. */
 export async function logAuditEvent(event: AuditEventInput): Promise<void> {
   const res = await fetch(`${backendUrl()}/api/review/audit-event`, {
     method: 'POST',

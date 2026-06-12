@@ -2,11 +2,10 @@
   import { WebRTCAudio, type WebRTCStatus } from '$lib/audio/webrtcAudio';
   import { onDestroy } from 'svelte';
 
-  // Browser audio over WebRTC (issue #7): captures the mic and connects to the
-  // helmsman's per-connection pipeline, so you can speak to the agent and hear
-  // its reply in the browser. Shown only when the backend reports
-  // `browser_audio` (audio.browser_enabled). Separate from the server-mic
-  // toggle, which gates the local-hardware pipeline.
+  // Browser audio over WebRTC: captures the mic and connects to the helmsman's
+  // per-connection pipeline, so you can speak to the agent and hear its reply
+  // in the browser. This is the only voice path -- the backend always reports
+  // `browser_audio: true`.
   let status = $state<WebRTCStatus>('idle');
   let detail = $state<string | null>(null);
 

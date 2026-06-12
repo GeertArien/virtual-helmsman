@@ -11,7 +11,7 @@
     type ReviewChunk
   } from '$lib/api';
 
-  /** n8n silently rejects edits below this threshold -- enforce client-side. */
+  /** The backend rejects edits below this threshold -- enforce client-side. */
   const MIN_EDIT_CHARS = 50;
 
   type LoadState =
@@ -126,8 +126,8 @@
     const totals = summary();
     if (totals.reject === load.batch.chunks.length) {
       const ok = window.confirm(
-        'You are rejecting every chunk in this batch. n8n will mark the batch ' +
-          'as failed. Submit anyway?'
+        'You are rejecting every chunk in this batch. The backend will mark ' +
+          'the batch as failed. Submit anyway?'
       );
       if (!ok) return;
     }

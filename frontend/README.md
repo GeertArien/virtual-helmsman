@@ -2,27 +2,26 @@
 
 SvelteKit + TypeScript dashboard for the voice agent. Subscribes to the
 backend's WebSocket for live conversation, ship state, and per-turn
-latency, and drives the n8n HITL ingestion + qdrant document-management
+latency, and drives the in-backend HITL ingestion + qdrant document-management
 routes through the Python backend's proxy.
 
 On every page load an **AI Act Art. 50 transparency gate** (`TransparencyModal`,
 mounted at the app root) blocks the UI until the user acknowledges they are
 interacting with an AI system. It has no persistence — re-prompts each session
-— and on acknowledge best-effort logs an `art50_acknowledged` row to the n8n
+— and on acknowledge best-effort logs an `art50_acknowledged` row to the
 audit trail (`POST /api/review/audit-event`), without ever blocking the user.
 
 Four pages:
 
 - **`/`** — *Monitor.* Live transcript, ship state, per-turn latency,
   plus a text-command chatbox. Voice input is the **browser audio**
-  control (shown when the backend reports `browser_audio`): connecting
-  it grants the agent your mic, disconnecting cuts it — there is no
-  separate mic toggle.
-- **`/documents`** — upload PDFs to the n8n ingestion pipeline, list
+  control: connecting it grants the agent your mic, disconnecting cuts
+  it — there is no separate mic toggle.
+- **`/documents`** — upload PDFs to the in-backend ingestion pipeline, list
   documents in qdrant, and review pending chunk batches.
   - **`/documents/<batch_id>`** — per-batch chunk review: approve, edit,
-    or reject each chunk, then submit decisions back to n8n.
-- **`/audit`** — the n8n audit log, rendered per-`actie` (ingestion
+    or reject each chunk, then submit decisions to the backend.
+- **`/audit`** — the audit log, rendered per-`actie` (ingestion
   success, all-rejected failure, LLM-error rows, transparency
   acknowledgements, etc.), with an `actie` filter.
 - **`/config`** — view, edit, and reload `config.yaml` in-place.
@@ -88,13 +87,13 @@ src/
   routes/
     +layout.svelte         # opens the WS stream once; renders the Art. 50 gate + <Header>
     +layout.ts             # SSR off (SPA-only)
-    +page.svelte           # Monitor page — conversation, ship state, metrics, chat, mic
+    +page.svelte           # Monitor page — conversation, ship state, metrics, chat, browser audio
     documents/
       +page.svelte         # upload, qdrant list/delete, pending-batch index
       [batch_id]/
         +page.svelte       # per-batch chunk review
     audit/
-      +page.svelte         # n8n audit log
+      +page.svelte         # audit log
     config/
       +page.svelte         # view/edit config.yaml
   lib/
@@ -121,9 +120,8 @@ it rather than duplicating state. Route changes do **not** drop the
 WebSocket — navigating between `/`, `/documents`, `/audit`, `/config`
 stays connected.
 
-On WS (re)connect, `liveState` re-fetches the REST snapshots (current
-mic state, session info) so the UI never shows a stale toggle after a
-backend restart.
+On WS (re)connect, `liveState` re-fetches the REST snapshots (session
+info) so the UI never shows stale session data after a backend restart.
 
 ## Toolchain
 

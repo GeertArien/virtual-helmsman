@@ -85,7 +85,7 @@
     </div>
   </div>
   <p class="hint">
-    Each batch is a PDF that the n8n ingestion workflow has chunked and is
+    Each batch is a PDF that the ingestion pipeline has chunked and is
     waiting for a human to approve. Click a row to review its chunks.
   </p>
 

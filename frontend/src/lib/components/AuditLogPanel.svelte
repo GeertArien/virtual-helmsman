@@ -7,7 +7,7 @@
     | { kind: 'ready'; entries: AuditEntry[]; totalInLog: number }
     | { kind: 'error'; message: string };
 
-  /** Default page size. n8n caps server-side at 500; 50 is a sensible tail. */
+  /** Default page size. The backend caps server-side at 500; 50 is a sensible tail. */
   const DEFAULT_LIMIT = 50;
 
   /** Auto-refresh cadence. Runtime entries (command/question) land in real
@@ -186,7 +186,7 @@
     </div>
   </div>
   <p class="hint">
-    Outcomes from the n8n <code>audit-log-maritime</code> datatable: HITL
+    Outcomes from the backend's <code>audit_log</code> table: HITL
     ingestion runs, runtime command parses, and runtime question (RAG)
     answers. Newest first; capped at {DEFAULT_LIMIT} rows. Auto-refresh every
     {Math.round(POLL_MS / 1000)}s.

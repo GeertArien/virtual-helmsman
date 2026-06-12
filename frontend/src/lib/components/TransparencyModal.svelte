@@ -102,9 +102,9 @@
     open = false;
     await tick();
     // Prefer the designated primary input, but only if it's enabled -- the
-    // chat box is intentionally disabled while the server mic is recording, and
-    // focus() is a no-op on a disabled control. Fall back to the first usable
-    // control in <main> so focus always lands somewhere actionable.
+    // chat box can be disabled (e.g. while browser audio is live), and focus()
+    // is a no-op on a disabled control. Fall back to the first usable control
+    // in <main> so focus always lands somewhere actionable.
     const target =
       document.querySelector<HTMLElement>('[data-primary-input]:not([disabled])') ??
       document.querySelector<HTMLElement>('[data-primary-input]') ??

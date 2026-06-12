@@ -38,7 +38,7 @@ function append(entry: Entry) {
 }
 
 function actionLabel(action: string, details: Record<string, unknown>): string {
-  // n8n action vocabulary -- map each type to a one-line readable summary
+  // Helmsman action vocabulary -- map each type to a one-line readable summary
   // for the conversation panel. Keep the prefix matching the action.type
   // so operators can grep for it in the audit log.
   if (action === 'rudder' && 'direction' in details && 'degrees' in details) {
