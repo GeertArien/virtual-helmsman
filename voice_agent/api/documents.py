@@ -20,12 +20,12 @@ https://qdrant.tech/documentation/concepts/points/ -- specifically the
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException
 
+from voice_agent import qdrant
 from voice_agent.config import DocumentsConfig
 from voice_agent.logging_setup import get_logger
 
@@ -42,18 +42,17 @@ def _missing(field: str) -> HTTPException:
 
 
 def _qdrant_headers(cfg: DocumentsConfig) -> dict[str, str]:
-    """Add ``api-key`` if QDRANT_API_KEY (or the configured env var) is set."""
-    headers = {"content-type": "application/json"}
-    key = os.environ.get(cfg.qdrant_api_key_env)
-    if key:
-        headers["api-key"] = key
-    return headers
+    """JSON content-type plus an ``api-key`` if the configured env var is set."""
+    return {
+        "content-type": "application/json",
+        **qdrant.api_key_headers(cfg.qdrant_api_key_env),
+    }
 
 
 async def _qdrant_post(
     client: httpx.AsyncClient,
     cfg: DocumentsConfig,
-    path: str,
+    url: str,
     json_body: dict[str, Any],
 ) -> dict[str, Any]:
     """POST to qdrant, surfacing upstream errors as 502 (bad gateway).
@@ -61,8 +60,6 @@ async def _qdrant_post(
     qdrant 4xx bodies usually carry a useful ``status.error`` string; we
     forward that verbatim so the frontend doesn't see a generic 502.
     """
-    assert cfg.qdrant_url is not None
-    url = cfg.qdrant_url.rstrip("/") + path
     try:
         res = await client.post(url, json=json_body, headers=_qdrant_headers(cfg))
     except httpx.RequestError as exc:
@@ -145,7 +142,7 @@ def create_documents_router(cfg: DocumentsConfig) -> APIRouter:
             data = await _qdrant_post(
                 client,
                 cfg,
-                f"/collections/{cfg.qdrant_collection}/points/scroll",
+                qdrant.points_url(cfg.qdrant_url, cfg.qdrant_collection, "scroll"),
                 body,
             )
             result = data.get("result", {})
@@ -184,7 +181,7 @@ def create_documents_router(cfg: DocumentsConfig) -> APIRouter:
         count_data = await _qdrant_post(
             client,
             cfg,
-            f"/collections/{cfg.qdrant_collection}/points/count",
+            qdrant.points_url(cfg.qdrant_url, cfg.qdrant_collection, "count"),
             {"filter": filter_clause, "exact": True},
         )
         deleted = int(count_data.get("result", {}).get("count", 0))
@@ -198,7 +195,7 @@ def create_documents_router(cfg: DocumentsConfig) -> APIRouter:
         await _qdrant_post(
             client,
             cfg,
-            f"/collections/{cfg.qdrant_collection}/points/delete",
+            qdrant.points_url(cfg.qdrant_url, cfg.qdrant_collection, "delete"),
             {"filter": filter_clause, "wait": True},
         )
         log.info(

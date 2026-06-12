@@ -22,6 +22,13 @@ from typing import Any
 
 import httpx
 
+from voice_agent.qdrant import (
+    BM25_MODEL,
+    DENSE_VECTOR_NAME,
+    SPARSE_VECTOR_NAME,
+    points_url,
+)
+
 
 async def embed_query(
     client: httpx.AsyncClient,
@@ -53,7 +60,7 @@ async def hybrid_query(
     embedding: list[float],
     question: str,
     top_k: int,
-    embedding_vector_name: str = "text-embedding-bge-m3",
+    embedding_vector_name: str = DENSE_VECTOR_NAME,
     headers: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Hybrid dense+BM25 query with RRF fusion; return raw Qdrant points.
@@ -63,7 +70,7 @@ async def hybrid_query(
     prefetch relies on Qdrant server-side inference (``qdrant/bm25``), exactly
     as the workflow did.
     """
-    url = f"{qdrant_url.rstrip('/')}/collections/{collection}/points/query"
+    url = points_url(qdrant_url, collection, "query")
     body = {
         "prefetch": [
             {
@@ -72,8 +79,8 @@ async def hybrid_query(
                 "limit": top_k * 2,
             },
             {
-                "query": {"text": question, "model": "qdrant/bm25"},
-                "using": "bm25",
+                "query": {"text": question, "model": BM25_MODEL},
+                "using": SPARSE_VECTOR_NAME,
                 "limit": top_k * 2,
             },
         ],
@@ -103,7 +110,7 @@ async def scroll_neighbours(
     (best-effort expansion) rather than failing the whole turn.
     """
     points: list[dict[str, Any]] = []
-    url = f"{qdrant_url.rstrip('/')}/collections/{collection}/points/scroll"
+    url = points_url(qdrant_url, collection, "scroll")
     for filename, ids in groups.items():
         if not ids:
             continue
