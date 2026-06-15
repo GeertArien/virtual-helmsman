@@ -24,16 +24,18 @@ turn_detection:
 
 llm:
   backend: langgraph
-  base_url: http://localhost:1234/v1
   model: unsloth/gemma-4-e4b-it
   rerank: true
   expansion: true
-  api_key_env: LLM_API_KEY
   timeout_seconds: 30
   max_retries: 1
-  qdrant_url: http://localhost:6333
-  qdrant_collection: maritime_hybrid
+lm_studio:
+  base_url: http://localhost:1234/v1
+  api_key_env: LLM_API_KEY
   embedding_model: text-embedding-bge-m3
+qdrant:
+  url: http://localhost:6333
+  collection: maritime_hybrid
 
 simulator:
   backend: real                    # wraps the vendored pythonnet wrappers

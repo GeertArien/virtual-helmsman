@@ -465,25 +465,28 @@ def test_build_llm_constructs_service(monkeypatch: pytest.MonkeyPatch) -> None:
     assert svc._audit_writer is None  # audit disabled
 
 
-def test_llm_config_langgraph_fields_and_qdrant_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    from voice_agent.config import LlmConfig
+def test_llm_runtime_langgraph_fields_and_qdrant_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    from voice_agent.config import parse_config
 
-    cfg = LlmConfig(
-        backend="langgraph",
-        base_url="http://localhost:1234/v1",
-        model="unsloth/gemma-4-e4b-it",
-        qdrant_url="http://localhost:6333",
-    )
-    assert cfg.backend == "langgraph"
-    assert cfg.qdrant_collection == "maritime_hybrid"
-    assert cfg.embedding_model == "text-embedding-bge-m3"
-    assert cfg.retrieval_top_k == 20
-    assert cfg.langfuse_enabled is False
+    rt = parse_config(
+        {
+            "stt": {"model": "m"},
+            "tts": {"voice": "v"},
+            "llm": {"backend": "langgraph", "model": "unsloth/gemma-4-e4b-it"},
+            "lm_studio": {"base_url": "http://localhost:1234/v1"},
+            "qdrant": {"url": "http://localhost:6333"},
+        }
+    ).llm_runtime()
+    assert rt.backend == "langgraph"
+    assert rt.qdrant_collection == "maritime_hybrid"
+    assert rt.embedding_model == "text-embedding-bge-m3"
+    assert rt.retrieval_top_k == 20
+    assert rt.langfuse_enabled is False
     # No key set -> no header.
     monkeypatch.delenv("QDRANT_API_KEY", raising=False)
-    assert cfg.resolved_qdrant_headers() == {}
+    assert rt.resolved_qdrant_headers() == {}
     monkeypatch.setenv("QDRANT_API_KEY", "secret")
-    assert cfg.resolved_qdrant_headers() == {"api-key": "secret"}
+    assert rt.resolved_qdrant_headers() == {"api-key": "secret"}
 
 
 # ---------- runtime audit rows ------------------------------------------------
@@ -609,7 +612,7 @@ async def test_build_runner_carries_chat_input_through_graph(
     import langchain_openai
 
     from voice_agent.backends.llm.langgraph_helmsman import graph as graph_mod
-    from voice_agent.config import LlmConfig
+    from voice_agent.config import parse_config
 
     seen: list[str] = []
 
@@ -640,11 +643,14 @@ async def test_build_runner_carries_chat_input_through_graph(
             )
 
     monkeypatch.setattr(langchain_openai, "ChatOpenAI", _FakeChat)
-    cfg = LlmConfig(
-        backend="langgraph",
-        base_url="http://localhost:1234/v1",
-        model="unsloth/gemma-4-e4b-it",
-    )
+    cfg = parse_config(
+        {
+            "stt": {"model": "m"},
+            "tts": {"voice": "v"},
+            "llm": {"backend": "langgraph", "model": "unsloth/gemma-4-e4b-it"},
+            "lm_studio": {"base_url": "http://localhost:1234/v1"},
+        }
+    ).llm_runtime()
     async with httpx.AsyncClient() as client:
         runner = graph_mod.build_runner(cfg, client)
         result = await runner("turn starboard twenty degrees")

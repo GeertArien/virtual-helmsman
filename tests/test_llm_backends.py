@@ -68,18 +68,15 @@ def test_llm_config_requires_model() -> None:
     from voice_agent.config import LlmConfig
 
     with pytest.raises(ValidationError):
-        LlmConfig(backend="openai_compatible", base_url="http://localhost:1234/v1")  # type: ignore[call-arg]
+        LlmConfig(backend="openai_compatible")  # type: ignore[call-arg]
 
 
-def test_llm_config_accepts_known_model() -> None:
+def test_llm_config_accepts_model() -> None:
     from voice_agent.config import LlmConfig
 
-    cfg = LlmConfig(
-        backend="openai_compatible",
-        base_url="http://localhost:1234/v1",
-        model="unsloth/gemma-4-e4b-it",
-    )
-    assert cfg.model == "unsloth/gemma-4-e4b-it"
+    # model is a free-form string now -- any id the lm_studio server serves.
+    cfg = LlmConfig(backend="openai_compatible", model="some/new-model")
+    assert cfg.model == "some/new-model"
     assert cfg.rerank is True
     assert cfg.expansion is True
 
@@ -90,4 +87,4 @@ def test_llm_config_rejects_unknown_backend() -> None:
     from voice_agent.config import LlmConfig
 
     with pytest.raises(ValidationError):
-        LlmConfig(backend="n8n", base_url="http://x", model="unsloth/gemma-4-e4b-it")  # type: ignore[arg-type]
+        LlmConfig(backend="n8n", model="unsloth/gemma-4-e4b-it")  # type: ignore[arg-type]

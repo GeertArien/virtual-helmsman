@@ -64,31 +64,35 @@ Like the n8n adapter, the backend emits one `LLMTextFrame` carrying an internal
 
 ## Configuration
 
+The connection settings are the shared `lm_studio` / `qdrant` / `langfuse`
+blocks; `llm` keeps only the backend tuning:
+
 ```yaml
 llm:
   backend: langgraph
-  base_url: http://localhost:1234/v1   # LM Studio /v1 (chat + embeddings)
   model: unsloth/gemma-4-e4b-it
-  api_key_env: LLM_API_KEY
   timeout_seconds: 30
   rerank: true
   expansion: true
-  qdrant_url: http://localhost:6333    # omit to run command-only
-  qdrant_collection: maritime_hybrid
-  qdrant_api_key_env: QDRANT_API_KEY
-  embedding_model: text-embedding-bge-m3
   retrieval_top_k: 20
-  langfuse_enabled: false
-  langfuse_host:                       # blank = Langfuse Cloud
-  langfuse_public_key_env: LANGFUSE_PUBLIC_KEY
-  langfuse_secret_key_env: LANGFUSE_SECRET_KEY
+lm_studio:
+  base_url: http://localhost:1234/v1   # /v1 server: chat + embeddings
+  api_key_env: LLM_API_KEY
+  embedding_model: text-embedding-bge-m3
+qdrant:
+  url: http://localhost:6333           # omit to run command-only
+  collection: maritime_hybrid
+  api_key_env: QDRANT_API_KEY
+langfuse:
+  enabled: false
+  host:                                # blank = Langfuse Cloud
 ```
 
 Ready-made: [`config.examples/config.langgraph.yaml`](../config.examples/config.langgraph.yaml).
 
-- **`qdrant_url` unset** → the command branch still works; a question turn
+- **`qdrant.url` unset** → the command branch still works; a question turn
   returns a graceful error envelope instead of attempting retrieval.
-- **`embedding_model`** must match the collection's dense named vector
+- **`lm_studio.embedding_model`** must match the collection's dense named vector
   (`bge-m3`, 1024-dim) — swapping it is a re-ingestion event, same caveat as
   the n8n pipeline.
 - **Langfuse** is best-effort: disabled by default, and a missing SDK or
