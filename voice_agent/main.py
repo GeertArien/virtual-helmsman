@@ -31,6 +31,7 @@ from voice_agent.pipeline import (
     build_shared_backends,
     build_text_injector,
 )
+from voice_agent.telemetry import run_ship_state_publisher
 
 
 def _session_info(config: AppConfig, session_id: str, started_at: str) -> SessionInfo:
@@ -76,6 +77,7 @@ async def _maybe_start_api(
             if built.task is not None
             else None
         ),
+        simulator=built.simulator,
         config_path=Path(config_path),
         # Default `Model` for /api/review/upload's doc-summary call, so
         # ingestion uses the same model as the helmsman LLM path.
@@ -122,6 +124,11 @@ async def _serve(
         )
 
     backends = build_shared_backends(config, session_id)
+    # Open the simulator link. Deliberately not fatal: the real backend returns
+    # without a link if the simulator is not up yet and keeps trying in the
+    # background, so the agent still answers questions on a quiet bridge. The
+    # mock is a no-op.
+    await backends.simulator.connect()
     manager = WebRTCManager(backends, config)
     if not manager.available():
         log.warning(
@@ -142,12 +149,22 @@ async def _serve(
     )
     api = await _maybe_start_api(config, shell, config_path, webrtc_manager=manager)
     log.info("browser_audio_ready", host=config.api.host, port=config.api.port)
+    # Live ship-state telemetry for the dashboard: between orders the ship
+    # keeps moving, and the dispatch-driven events alone would freeze the panel.
+    # No event bus (api disabled) means nobody is listening -- don't bother.
+    telemetry: asyncio.Task[None] | None = None
+    if backends.event_bus is not None:
+        telemetry = asyncio.create_task(
+            run_ship_state_publisher(backends.simulator, backends.event_bus)
+        )
     runner = PipelineRunner(handle_sigint=True)
     try:
         # The text task idles between typed commands (idle timeout disabled)
         # and serves until SIGINT.
         await runner.run(text_task)
     finally:
+        if telemetry is not None:
+            telemetry.cancel()
         if api is not None:
             await api.stop()
         # Release simulator resources (UDP sockets / threads on the real backend).

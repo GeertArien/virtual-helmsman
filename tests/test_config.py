@@ -41,6 +41,26 @@ def test_load_repo_config_yaml(monkeypatch: pytest.MonkeyPatch) -> None:
     assert config.stt.backend == "parakeet_onnx"
 
 
+@pytest.mark.parametrize(
+    "example",
+    sorted((_REPO_ROOT / "config.examples").glob("*.yaml")),
+    ids=lambda p: p.name,
+)
+def test_config_examples_still_load(
+    example: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every shipped example must parse.
+
+    The config models forbid extra keys, so an example that still names a
+    renamed field is not a stale comment -- it is a file that raises the moment
+    someone follows the README. Only config.yaml was covered before, which is
+    exactly how the examples drifted.
+    """
+    monkeypatch.delenv("LLM_BASE_URL", raising=False)
+    monkeypatch.delenv("SIMULATOR_BACKEND", raising=False)
+    assert isinstance(load_config(example), AppConfig)
+
+
 def test_load_config_missing_file_raises() -> None:
     with pytest.raises(FileNotFoundError):
         load_config(_REPO_ROOT / "does-not-exist.yaml")
@@ -105,3 +125,38 @@ def test_missing_required_block_rejected() -> None:
     del data["llm"]
     with pytest.raises(ValidationError):
         parse_config(data)
+
+
+# --- legacy simulator.real keys (renamed in the simulator integration) ------
+
+
+def _with_legacy_real_block(backend: str) -> dict[str, Any]:
+    data = _minimal()
+    data["simulator"] = {
+        "backend": backend,
+        "real": {"host": "127.0.0.1", "port": 9100, "connect_timeout_seconds": 2},
+    }
+    return data
+
+
+def test_legacy_real_keys_are_dropped_for_mock_users() -> None:
+    """A stale real-block must not stop a mock user from starting.
+
+    Every previously shipped config carried simulator.real.host/port even with
+    backend mock; those keys configured a backend that was never implemented,
+    so refusing to start over them would punish exactly the users the rename
+    cannot affect.
+    """
+    with pytest.warns(UserWarning, match="simulator.real"):
+        config = parse_config(_with_legacy_real_block("mock"))
+    assert config.simulator.backend == "mock"
+    # The renamed fields keep their defaults (0 = "not configured": the
+    # working values ship with the vendor integration, not this repo).
+    assert config.simulator.real.remote_port == 0
+
+
+def test_legacy_real_keys_are_a_clear_error_for_real_users() -> None:
+    """A real user must get the rename explained, not pydantic's bare
+    'extra inputs are not permitted'."""
+    with pytest.raises(Exception, match="remote_host"):
+        parse_config(_with_legacy_real_block("real"))

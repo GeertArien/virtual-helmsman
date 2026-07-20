@@ -31,6 +31,7 @@ from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
 from voice_agent.api.review import create_review_router
 from voice_agent.api.webrtc import WebRTCManager, create_webrtc_router
+from voice_agent.backends.simulator.base import SimulatorClient
 from voice_agent.config import DocumentsRuntime, IngestionRuntime
 from voice_agent.logging_setup import get_logger
 
@@ -65,6 +66,7 @@ def create_app(
     documents: DocumentsRuntime | None = None,
     review: IngestionRuntime | None = None,
     inject_text: TextInjector | None = None,
+    simulator: SimulatorClient | None = None,
     config_path: Path | None = None,
     llm_model: str | None = None,
     webrtc_manager: WebRTCManager | None = None,
@@ -132,7 +134,9 @@ def create_app(
         app.include_router(review_router)
     if inject_text is not None:
         app.include_router(
-            create_control_router(event_bus=event_bus, inject_text=inject_text)
+            create_control_router(
+                event_bus=event_bus, inject_text=inject_text, simulator=simulator
+            )
         )
     if config_path is not None:
         app.include_router(create_config_router(config_path=config_path))

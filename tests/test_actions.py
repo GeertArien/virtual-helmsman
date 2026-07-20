@@ -8,6 +8,7 @@ import pytest
 
 from voice_agent.actions.dispatch import (
     BRIDGE_LOST,
+    COURSE_ORDER_REFUSAL,
     _knots_to_telegraph,
     dispatch_action,
 )
@@ -23,14 +24,28 @@ from voice_agent.actions.schema import (
     ThrottleAction,
     parse_response,
 )
-from voice_agent.backends.simulator.base import EngineOrder, SimulatorError
+from voice_agent.backends.simulator.base import (
+    ConnectionState,
+    EngineOrder,
+    SimulatorError,
+)
 from voice_agent.backends.simulator.mock import MockSimulatorClient
 
 
 class _FailingSimulator:
     """SimulatorClient stub whose every command raises SimulatorError."""
 
-    async def set_heading(self, degrees: float) -> Any:
+    @property
+    def connection_state(self) -> ConnectionState:
+        return ConnectionState.STALE
+
+    async def connect(self) -> None:
+        return None
+
+    async def disconnect(self) -> None:
+        return None
+
+    async def set_rudder(self, angle_deg: float) -> Any:
         raise SimulatorError("boom")
 
     async def set_engine_telegraph(self, order: EngineOrder) -> Any:
@@ -219,44 +234,89 @@ def test_knots_to_telegraph_bands(knots: float, expected_order: EngineOrder) -> 
 # --- dispatch_action ----------------------------------------------------
 
 
-async def test_dispatch_navigation_sets_absolute_heading() -> None:
+async def test_dispatch_navigation_is_refused_without_touching_the_sim() -> None:
+    """A course order is recognised but not executed: v1 has no steering loop."""
     sim = MockSimulatorClient(log_commands=False)
     parsed = parse_response(
         '{"action": {"type": "navigation", "course": 270}, '
         '"response": "Steering two seven zero, aye."}'
     )
     result = await dispatch_action(parsed, sim)
-    assert result.ok
-    assert result.spoken == "Steering two seven zero, aye."
-    assert [c.command for c in sim.command_history] == ["set_heading"]
-    assert result.ship_state is not None
-    assert result.ship_state.heading_deg == 270.0
+    assert not result.ok
+    assert result.spoken == COURSE_ORDER_REFUSAL
+    # Crucially: the LLM's confident "steering, aye" is NOT spoken, and the
+    # helm is not touched -- no rudder guessed on the ship's behalf.
+    assert sim.command_history == []
 
 
-async def test_dispatch_rudder_starboard_adds_delta_to_current() -> None:
+async def test_dispatch_rudder_starboard_orders_positive_angle() -> None:
+    """Starboard is positive, and the order is the angle -- not a heading delta."""
     sim = MockSimulatorClient(initial_heading=100, log_commands=False)
     parsed = parse_response(
         '{"action": {"type": "rudder", "direction": "starboard", "degrees": 30}, '
         '"response": "Starboard thirty, aye."}'
     )
     result = await dispatch_action(parsed, sim)
+    assert [c.command for c in sim.command_history] == ["set_rudder"]
+    assert sim.command_history[0].arguments == {"angle_deg": 30.0}
     assert result.ship_state is not None
-    assert result.ship_state.heading_deg == 130.0
+    assert result.ship_state.rudder_angle_deg == 30.0
+    # The heading is the ship's business, not the order's.
+    assert result.ship_state.heading_deg == 100.0
 
 
-async def test_dispatch_rudder_port_subtracts() -> None:
+async def test_dispatch_rudder_port_orders_negative_angle() -> None:
     sim = MockSimulatorClient(initial_heading=10, log_commands=False)
     parsed = parse_response(
         '{"action": {"type": "rudder", "direction": "port", "degrees": 30}, '
         '"response": "Port thirty, aye."}'
     )
     result = await dispatch_action(parsed, sim)
-    # 10 - 30 = -20, wrapped to 340
+    assert sim.command_history[0].arguments == {"angle_deg": -30.0}
     assert result.ship_state is not None
-    assert result.ship_state.heading_deg == 340.0
+    assert result.ship_state.rudder_angle_deg == -30.0
+    assert result.ship_state.heading_deg == 10.0
+
+
+async def test_dispatch_rudder_zero_is_midships() -> None:
+    """"Midships" is just a rudder order of zero; direction is irrelevant."""
+    sim = MockSimulatorClient(log_commands=False)
+    for direction in ("port", "starboard"):
+        parsed = parse_response(
+            '{"action": {"type": "rudder", "direction": "%s", "degrees": 0}, '
+            '"response": "Midships, aye."}' % direction
+        )
+        result = await dispatch_action(parsed, sim)
+        assert result.ship_state is not None
+        assert result.ship_state.rudder_angle_deg == 0.0
+
+
+async def test_dispatch_throttle_order_is_used_verbatim() -> None:
+    """A named telegraph order goes straight through -- no knots round-trip."""
+    sim = MockSimulatorClient(log_commands=False)
+    parsed = parse_response(
+        '{"action": {"type": "throttle", "order": "half_ahead"}, '
+        '"response": "Half ahead, aye."}'
+    )
+    result = await dispatch_action(parsed, sim)
+    assert [c.command for c in sim.command_history] == ["set_engine_telegraph"]
+    assert result.ship_state is not None
+    assert result.ship_state.engine_order is EngineOrder.HALF_AHEAD
+
+
+async def test_dispatch_throttle_order_wins_over_speed() -> None:
+    sim = MockSimulatorClient(log_commands=False)
+    parsed = parse_response(
+        '{"action": {"type": "throttle", "order": "dead_slow_ahead", "speed": 15}, '
+        '"response": "Dead slow ahead, aye."}'
+    )
+    result = await dispatch_action(parsed, sim)
+    assert result.ship_state is not None
+    assert result.ship_state.engine_order is EngineOrder.DEAD_SLOW_AHEAD
 
 
 async def test_dispatch_throttle_maps_to_engine_telegraph() -> None:
+    """Knots remain a valid order; the telegraph takes the nearest position."""
     sim = MockSimulatorClient(log_commands=False)
     parsed = parse_response(
         '{"action": {"type": "throttle", "speed": 15, "unit": "knots"}, '
@@ -339,7 +399,8 @@ async def test_dispatch_error_action_skips_simulator() -> None:
 
 async def test_dispatch_simulator_error_reports_bridge_lost() -> None:
     parsed = parse_response(
-        '{"action": {"type": "navigation", "course": 90}, "response": "x"}'
+        '{"action": {"type": "rudder", "direction": "port", "degrees": 10}, '
+        '"response": "x"}'
     )
     result = await dispatch_action(parsed, _FailingSimulator())
     assert not result.ok
@@ -349,15 +410,15 @@ async def test_dispatch_simulator_error_reports_bridge_lost() -> None:
 # --- JsonActionProcessor ------------------------------------------------
 
 
-async def test_processor_resolves_navigation_and_speaks() -> None:
+async def test_processor_resolves_helm_order_and_speaks() -> None:
     sim = MockSimulatorClient(log_commands=False)
     proc = JsonActionProcessor(simulator=sim)
     spoken = await proc._resolve(
-        '{"action": {"type": "navigation", "course": 90}, '
-        '"response": "Coming to zero nine zero, aye."}'
+        '{"action": {"type": "rudder", "direction": "port", "degrees": 10}, '
+        '"response": "Port ten, aye sir. Wheel\'s ten to port."}'
     )
-    assert spoken == "Coming to zero nine zero, aye."
-    assert [c.command for c in sim.command_history] == ["set_heading"]
+    assert spoken == "Port ten, aye sir. Wheel's ten to port."
+    assert [c.command for c in sim.command_history] == ["set_rudder"]
 
 
 async def test_processor_resolve_handles_unparseable_output() -> None:
@@ -366,3 +427,78 @@ async def test_processor_resolve_handles_unparseable_output() -> None:
     spoken = await proc._resolve("the model did not return JSON")
     assert spoken == UNPARSEABLE
     assert sim.command_history == []
+
+
+# --- turn events: the audit trail must match what actually happened --------
+
+
+def _drain(queue) -> list[Any]:
+    events = []
+    while not queue.empty():
+        events.append(queue.get_nowait())
+    return events
+
+
+async def test_refused_course_order_is_not_published_as_dispatched() -> None:
+    """A course order is recognised but not executed; the audit must say so.
+
+    Publishing it as `action_dispatched` would show an incident reviewer an
+    order recorded as executed that never reached the ship.
+    """
+    from voice_agent.api.events import EventBus
+
+    bus = EventBus()
+    queue = bus.subscribe()
+    sim = MockSimulatorClient(log_commands=False)
+    proc = JsonActionProcessor(simulator=sim, event_bus=bus)
+
+    await proc._resolve(
+        '{"action": {"type": "navigation", "course": 90}, '
+        '"response": "Steering zero nine zero, aye."}'
+    )
+
+    kinds = [e.kind for e in _drain(queue)]
+    assert "action_dispatched" not in kinds
+    assert "action_refused" in kinds
+    assert "ship_state" not in kinds
+
+
+async def test_failed_order_is_published_as_refused_with_the_spoken_reason() -> None:
+    """Link down: the log entry must carry the same phrase the operator heard."""
+    from voice_agent.api.events import EventBus
+
+    bus = EventBus()
+    queue = bus.subscribe()
+    proc = JsonActionProcessor(simulator=_FailingSimulator(), event_bus=bus)
+
+    await proc._resolve(
+        '{"action": {"type": "rudder", "direction": "port", "degrees": 10}, '
+        '"response": "Port ten, aye."}'
+    )
+
+    events = _drain(queue)
+    kinds = [e.kind for e in events]
+    assert "action_dispatched" not in kinds
+    refused = next(e for e in events if e.kind == "action_refused")
+    assert refused.error_type == "not_executed"
+    assert refused.reason == BRIDGE_LOST
+
+
+async def test_executed_order_still_publishes_dispatched_and_ship_state() -> None:
+    """The refusal path must not swallow the normal audit events."""
+    from voice_agent.api.events import EventBus
+
+    bus = EventBus()
+    queue = bus.subscribe()
+    sim = MockSimulatorClient(log_commands=False)
+    proc = JsonActionProcessor(simulator=sim, event_bus=bus)
+
+    await proc._resolve(
+        '{"action": {"type": "rudder", "direction": "port", "degrees": 10}, '
+        '"response": "Port ten, aye."}'
+    )
+
+    kinds = [e.kind for e in _drain(queue)]
+    assert "action_dispatched" in kinds
+    assert "ship_state" in kinds
+    assert "action_refused" not in kinds

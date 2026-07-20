@@ -16,8 +16,8 @@ name = "virtual-helmsman"
 version = "0.1.0"
 description = "Modular local voice agent for a ship simulator (NVIDIA client, remote LLM)"
 readme = "README.md"
-# Upper bound is real: kokoro-onnx (default TTS) and pythonnet have no
-# Python 3.14 wheels as of May 2026. Develop on Python 3.13.
+# Upper bound is real: kokoro-onnx (the default TTS) has no Python 3.14
+# wheels as of May 2026. Develop on Python 3.13.
 requires-python = ">=3.11,<3.14"
 
 dependencies = [
@@ -48,12 +48,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Real simulator backend: loads the managed .NET DLL via pythonnet. Optional
-# because the mock backend is the development default and needs no .NET. Only
-# install this when integrating against the real simulator (Windows-only).
-# Note: pythonnet 3.0.x supports Python <= 3.13; on Python 3.14 only
-# pythonnet 3.1.0rc0+ is available, so this is left unpinned.
-real-sim = ['pythonnet>=3.0.5 ; sys_platform == "win32"']
+# The real simulator backend's runtime dependencies are NOT listed here: they
+# ship with the hand-dropped vendor integration (see
+# voice_agent/backends/simulator/vendor/README.md), whose install notes live in
+# the private simulator repository.
 # parakeet_nemo STT backend. Heavy, optional — parakeet_onnx is the default.
 nemo = ["nemo-toolkit[asr]>=2.0"]
 # In-backend `langgraph` LLM backend + local HITL ingestion: the helmsman

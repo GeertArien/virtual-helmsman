@@ -1,21 +1,27 @@
 """Translate a parsed helmsman action into simulator calls.
 
 The :class:`~voice_agent.backends.simulator.base.SimulatorClient` protocol
-speaks a narrow vocabulary (``set_heading`` / ``set_engine_telegraph`` /
+speaks conning orders (``set_rudder`` / ``set_engine_telegraph`` /
 ``get_state``). The LLM speaks the richer n8n vocabulary (``rudder``,
 ``throttle``, ``navigation``, ``autopilot``, ``anchor``, ``status_query``,
 ``error``). This module is the translation layer.
 
 Mapping summary:
 
-* ``navigation`` -> ``set_heading(course)`` directly.
-* ``rudder`` -> read current heading, add/subtract ``degrees`` based on
-  ``direction``, ``set_heading(new % 360)``.
+* ``rudder`` -> ``set_rudder(±degrees)``: port negative, starboard positive.
+  This is a *helm order* -- the rudder goes to that angle and stays there
+  until countermanded ("midships" is simply ``degrees: 0``).
 * ``throttle`` -> map ``speed`` knots to the nearest ``EngineOrder`` and
   call ``set_engine_telegraph`` (see :func:`_knots_to_telegraph`).
+* ``navigation`` -> **refused in v1** (see :data:`COURSE_ORDER_REFUSAL`).
+  A course order ("steer 090") asks for a closed loop against the compass;
+  the simulator exposes no heading setpoint, and in real pilotage that loop
+  *is* the helmsman's own work. Implementing it as a steering skill on top of
+  ``set_rudder`` is a follow-up, not a v1 requirement -- so we say so plainly
+  rather than half-executing the order.
 * ``status_query`` -> ``get_state``; the spoken response is augmented with
   the requested field (heading / speed / position-not-available).
-* ``autopilot`` / ``anchor`` -> not yet supported by the simulator wrapper;
+* ``autopilot`` / ``anchor`` -> not supported by the simulator interface;
   acknowledged verbally, logged as ``simulator_skip_unsupported``, no
   state change. The action still publishes an ``action_dispatched`` event
   (consumers can render an audit row) -- the operator sees that the
@@ -51,6 +57,14 @@ from voice_agent.logging_setup import get_logger
 
 # Spoken when the simulator backend fails -- voiced verbatim to the captain.
 BRIDGE_LOST = "Lost contact with the bridge, sir. Unable to comply."
+
+# Spoken when a course order is given. v1 executes helm orders (rudder angles)
+# and engine orders, not course-keeping -- so the helmsman says what it can do
+# instead of silently doing something else.
+COURSE_ORDER_REFUSAL = (
+    "Unable to steer a course, sir. I can answer the helm on rudder orders "
+    "and the telegraph. Request a helm order, such as port ten."
+)
 
 
 @dataclass
@@ -134,32 +148,42 @@ async def dispatch_action(
         log.info("answer_returned")
         return DispatchResult(spoken=parsed.response)
 
-    try:
-        if isinstance(action, NavigationAction):
-            state = await simulator.set_heading(float(action.course))
-            log.info("action_dispatched", action="navigation", course=action.course)
-            return DispatchResult(spoken=parsed.response, ship_state=state)
+    if isinstance(action, NavigationAction):
+        # Not a simulator failure -- a capability we deliberately do not have
+        # yet, so it is reported like a refusal rather than a lost link.
+        log.warning(
+            "simulator_skip_unsupported", action="navigation", course=action.course
+        )
+        return DispatchResult(spoken=COURSE_ORDER_REFUSAL, ok=False)
 
+    try:
         if isinstance(action, RudderAction):
-            current = await simulator.get_state()
-            delta = action.degrees if action.direction == "starboard" else -action.degrees
-            new_heading = (current.heading_deg + delta) % 360
-            state = await simulator.set_heading(new_heading)
+            # The action already *is* a rudder-angle order; only the sign is
+            # ours to resolve. No read-modify-write of the heading.
+            angle = action.degrees if action.direction == "starboard" else -action.degrees
+            state = await simulator.set_rudder(angle)
             log.info(
                 "action_dispatched",
                 action="rudder",
                 direction=action.direction,
                 degrees=action.degrees,
-                resolved_heading=new_heading,
+                ordered_angle_deg=angle,
             )
             return DispatchResult(spoken=parsed.response, ship_state=state)
 
         if isinstance(action, ThrottleAction):
-            order = _knots_to_telegraph(action.speed)
+            # A named telegraph order is exact; knots are a request the
+            # 9-position telegraph can only approximate. Prefer the former.
+            if action.order is not None:
+                order = EngineOrder(action.order)
+            else:
+                # The schema guarantees one of the two is set.
+                order = _knots_to_telegraph(float(action.speed))
             state = await simulator.set_engine_telegraph(order)
             log.info(
                 "action_dispatched",
                 action="throttle",
+                order=action.order,
                 speed=action.speed,
                 resolved_order=order.value,
             )

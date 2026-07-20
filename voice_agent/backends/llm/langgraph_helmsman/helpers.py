@@ -21,13 +21,21 @@ from typing import Any
 
 from voice_agent.actions.dispatch import BRIDGE_LOST
 
-# Mirrors the n8n "Classify Intent" system prompt. One-word COMMAND/QUESTION.
+# One-word COMMAND/QUESTION classifier (adapted from the n8n "Classify
+# Intent" prompt for conning-order vocabulary). The COMMAND side spells out
+# helm phrases because small models otherwise pattern-match the word "port"
+# in "port ten" against question topics like ports/harbours, and "midships"
+# carries no steering keyword at all. Own-ship status requests are COMMANDs
+# (answered from live ship state), only document lookups are QUESTIONs.
 CLASSIFY_SYSTEM = (
     "Classify the bridge message as one word. Reply COMMAND if it is an order "
-    "to the helm or engine (steering, rudder, speed, heading, autopilot, "
-    "anchor) or a vessel status request. Reply QUESTION if it asks for "
-    "information about maritime rules, COLREGS, VTS, ports or navigation. "
-    "Reply with only one word: COMMAND or QUESTION."
+    "to the helm or engine telegraph -- rudder orders like 'port ten', "
+    "'starboard five', 'midships', 'hard a port'; engine orders like 'half "
+    "ahead', 'stop engine'; heading, autopilot or anchor orders -- or a vessel "
+    "status request about our own ship right now, like 'what is our heading', "
+    "'report speed', 'where are we'. Reply QUESTION if it asks for "
+    "information about maritime rules, COLREGS, VTS, harbour regulations or "
+    "navigation guidance. Reply with only one word: COMMAND or QUESTION."
 )
 
 # Mirrors the n8n "Rerank Chunks" system prompt (RankGPT-style listwise).

@@ -46,5 +46,9 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# NOTE: voice_agent/backends/simulator/vendor/ is intentionally NOT ignored.
-# Vendored simulator wrapper .py files and the .NET DLL belong in the repo.
+# Vendored simulator integration (see backends/simulator/vendor/README.md).
+# Everything in there derives from the in-house simulator sources. None of it
+# may be published here; it is hand-dropped per machine and the `real` backend
+# loads it at runtime. Only the README is tracked.
+voice_agent/backends/simulator/vendor/*
+!voice_agent/backends/simulator/vendor/README.md

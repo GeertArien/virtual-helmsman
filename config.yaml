@@ -39,10 +39,16 @@ database:
   path: ./data/ingestion.db       # SQLite: HITL pending batches + the audit log (runtime + ingestion)
 simulator:
   backend: mock
-  real:
-    host: 127.0.0.1
-    port: 9100
-    connect_timeout_seconds: 2
+  real:                            # only used when backend: real -- see config.examples/config.real_sim.yaml
+    remote_host: 127.0.0.1         # we send here; the simulator listens here
+    remote_port: 0                 # 0 = not configured; the working values come with the vendor
+    local_host: 127.0.0.1          # we listen here; the link is unauthenticated, so widen beyond loopback only for a genuinely remote simulator
+    local_port: 0                  #   integration notes -- set them in a local config, never commit them
+    connect_timeout_seconds: 5
+    expected_fps: 0                # simulator broadcast rate; comes with the vendor integration
+    stale_after_missed_frames: 20
+    reconnect_initial_seconds: 1
+    reconnect_max_seconds: 15
   mock:
     initial_heading: 0
     initial_engine_order: stop

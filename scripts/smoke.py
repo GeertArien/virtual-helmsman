@@ -1,10 +1,14 @@
 """Smoke test: full LLM -> JSON action -> simulator path, no audio.
 
-Seeds the user utterance "steer course two seven zero" into the LLM context,
-runs a minimal pipeline (user aggregator -> LLM -> JsonActionProcessor ->
-assistant aggregator) against a ``MockSimulatorClient``, triggers the LLM with
-an ``LLMRunFrame``, and asserts the processor parsed the JSON response,
-dispatched ``set_heading`` with ``degrees ~= 270``, and the mock recorded it.
+Seeds the user utterance "port ten" into the LLM context, runs a minimal
+pipeline (user aggregator -> LLM -> JsonActionProcessor -> assistant
+aggregator) against a ``MockSimulatorClient``, triggers the LLM with an
+``LLMRunFrame``, and asserts the processor parsed the JSON response,
+dispatched ``set_rudder`` with ``angle_deg ~= -10`` (port is negative), and the
+mock recorded it.
+
+A helm order, not a course order: "steer two seven zero" is refused by design
+in v1 (see ``dispatch.COURSE_ORDER_REFUSAL``), so it would exercise nothing.
 
 The utterance is seeded straight into the context (the equivalent of a
 finalized transcript): with Pipecat 1.2.x's universal aggregator a bare
@@ -42,8 +46,8 @@ from voice_agent.backends.simulator.mock import MockSimulatorClient
 from voice_agent.config import load_config
 from voice_agent.logging_setup import configure_logging, new_session_id
 
-_UTTERANCE = "steer course two seven zero"
-_EXPECTED_DEG = 270
+_UTTERANCE = "port ten"
+_EXPECTED_ANGLE_DEG = -10.0  # port is negative
 _TIMEOUT_S = 30.0
 
 
@@ -77,17 +81,17 @@ async def _smoke(config_path: str) -> bool:
     await run_handle
 
     # --- assertions -----------------------------------------------------
-    heading_cmds = [c for c in mock.command_history if c.command == "set_heading"]
-    if not heading_cmds:
-        print(f"FAIL: no set_heading command recorded for '{_UTTERANCE}'.")
+    rudder_cmds = [c for c in mock.command_history if c.command == "set_rudder"]
+    if not rudder_cmds:
+        print(f"FAIL: no set_rudder command recorded for '{_UTTERANCE}'.")
         return False
 
-    degrees = heading_cmds[0].result.heading_deg
-    if abs(degrees - _EXPECTED_DEG) > 1.0:
-        print(f"FAIL: set_heading degrees={degrees}, expected ~{_EXPECTED_DEG}.")
+    angle = rudder_cmds[0].result.rudder_angle_deg
+    if abs(angle - _EXPECTED_ANGLE_DEG) > 1.0:
+        print(f"FAIL: set_rudder angle_deg={angle}, expected ~{_EXPECTED_ANGLE_DEG}.")
         return False
 
-    print(f"PASS: '{_UTTERANCE}' -> set_heading(degrees={degrees}).")
+    print(f"PASS: '{_UTTERANCE}' -> set_rudder(angle_deg={angle}).")
     return True
 
 

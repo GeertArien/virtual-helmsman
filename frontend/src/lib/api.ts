@@ -42,6 +42,29 @@ export interface ShipStateEvent extends BaseEvent {
   heading_deg: number;
   speed_kn: number;
   engine_order: string;
+  /** Actual rudder angle: negative port, positive starboard. Lags an order --
+   *  a real rudder slews only a few degrees per second. */
+  rudder_angle_deg: number;
+  /** Exercise clock in seconds; null on backends without one (the mock). */
+  sim_time_s: number | null;
+  /** GPS position in signed decimal degrees; null when unavailable. */
+  lat_deg: number | null;
+  lon_deg: number | null;
+}
+
+/** Health of the link to the simulator.
+ *  - `connecting`: trying, but no data yet (e.g. the simulator is not running)
+ *  - `stale`: the link was live and has gone quiet; reconnecting
+ *  Orders are only carried out while `connected`. */
+export type SimulatorConnectionState =
+  | 'disconnected'
+  | 'connecting'
+  | 'connected'
+  | 'stale';
+
+export interface ConnectionStateEvent extends BaseEvent {
+  kind: 'connection_state';
+  state: SimulatorConnectionState;
 }
 
 export interface TurnMetricsEvent extends BaseEvent {
@@ -62,7 +85,8 @@ export type AgentEvent =
   | ActionDispatchedEvent
   | ActionRefusedEvent
   | ShipStateEvent
-  | TurnMetricsEvent;
+  | TurnMetricsEvent
+  | ConnectionStateEvent;
 
 export interface SessionInfo {
   session_id: string;
@@ -124,6 +148,41 @@ export async function fetchSession(): Promise<SessionInfo> {
   const res = await fetch(`${backendUrl()}/api/session`);
   if (!res.ok) throw new Error(`/api/session: HTTP ${res.status}`);
   return (await res.json()) as SessionInfo;
+}
+
+// --- Simulator link ---------------------------------------------------------
+
+export interface SimulatorStateResponse {
+  state: SimulatorConnectionState;
+  ts: string;
+}
+
+/** Current link state. Needed on page load: `connection_state` events only
+ *  report *changes*, and the next one may be minutes away. */
+export async function fetchSimulatorState(): Promise<SimulatorStateResponse> {
+  const res = await fetch(`${backendUrl()}/api/control/simulator`);
+  if (!res.ok) throw new Error(`/api/control/simulator: HTTP ${res.status}`);
+  return (await res.json()) as SimulatorStateResponse;
+}
+
+/** Open the link. The returned state may be `connecting` rather than
+ *  `connected` -- with no simulator running there is nothing to reach yet, and
+ *  the backend keeps trying. That is a normal answer, not a failure. */
+export async function connectSimulator(): Promise<SimulatorStateResponse> {
+  const res = await fetch(`${backendUrl()}/api/control/simulator/connect`, {
+    method: 'POST'
+  });
+  if (!res.ok) throw new Error(`/api/control/simulator/connect: HTTP ${res.status}`);
+  return (await res.json()) as SimulatorStateResponse;
+}
+
+/** Close the link and stop reconnecting until asked again. */
+export async function disconnectSimulator(): Promise<SimulatorStateResponse> {
+  const res = await fetch(`${backendUrl()}/api/control/simulator/disconnect`, {
+    method: 'POST'
+  });
+  if (!res.ok) throw new Error(`/api/control/simulator/disconnect: HTTP ${res.status}`);
+  return (await res.json()) as SimulatorStateResponse;
 }
 
 // --- Documents (qdrant management) ------------------------------------------

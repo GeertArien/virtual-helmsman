@@ -146,11 +146,34 @@ class JsonActionProcessor(FrameProcessor):
             # published carries the spoken answer. Nothing to dispatch.
             return
 
+        if not result.ok:
+            # Recognised but NOT carried out -- a course order the helm cannot
+            # steer, or a simulator failure behind the spoken BRIDGE_LOST. The
+            # audit trail must say so: publishing these as "dispatched" would
+            # show an incident reviewer an order recorded as executed that
+            # never reached the ship. The reason is exactly the phrase the
+            # operator heard, so log and speech stay consistent.
+            self._event_bus.publish(
+                ActionRefusedEvent(
+                    error_type="not_executed",
+                    reason=spoken,
+                    suggestion="",
+                )
+            )
+            return
+
         details: dict[str, Any]
         if isinstance(action, RudderAction):
             details = {"direction": action.direction, "degrees": action.degrees}
         elif isinstance(action, ThrottleAction):
-            details = {"speed": action.speed, "unit": action.unit}
+            # Either form may be absent: `order` is the telegraph position, and
+            # `speed` the knots fallback. Report whichever was ordered.
+            details = {}
+            if action.order is not None:
+                details["order"] = action.order
+            if action.speed is not None:
+                details["speed"] = action.speed
+                details["unit"] = action.unit
         elif isinstance(action, NavigationAction):
             details = {"course": action.course}
         elif isinstance(action, AutopilotAction):
@@ -175,5 +198,9 @@ class JsonActionProcessor(FrameProcessor):
                     heading_deg=state.heading_deg,
                     speed_kn=state.speed_kn,
                     engine_order=state.engine_order.value,
+                    rudder_angle_deg=state.rudder_angle_deg,
+                    sim_time_s=state.sim_time_s,
+                    lat_deg=state.lat_deg,
+                    lon_deg=state.lon_deg,
                 )
             )

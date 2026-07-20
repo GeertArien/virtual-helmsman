@@ -1,12 +1,13 @@
-"""Tests for the /api/control text-injection endpoint and pipeline helpers.
+"""Tests for the /api/control routes and pipeline helpers.
 
 The control router is exercised via the FastAPI test client with a list-append
 stub standing in for the real ``PipelineTask.queue_frame`` callable -- this
 keeps the tests hermetic (no Pipecat task to spin up) while still verifying
 the exact frame the router would push onto the pipeline.
 
-Voice input is the browser-audio (WebRTC) path; the only control route is the
-dashboard chatbox (``POST /api/control/text``).
+Voice input is the browser-audio (WebRTC) path; the control routes are the
+dashboard chatbox (``POST /api/control/text``) and the simulator link
+(``GET /api/control/simulator``, ``POST .../connect``, ``POST .../disconnect``).
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ from pipecat.processors.frame_processor import FrameDirection
 
 from voice_agent.api.app import SessionInfo, create_app
 from voice_agent.api.events import EventBus
+from voice_agent.backends.simulator.base import ConnectionState
+from voice_agent.backends.simulator.mock import MockSimulatorClient
 
 
 def _session() -> SessionInfo:
@@ -48,12 +51,42 @@ class _InjectStub:
         self.texts.append(text)
 
 
+class _LinkStub:
+    """A simulator whose link state the test drives directly."""
+
+    def __init__(self, state: ConnectionState = ConnectionState.CONNECTED) -> None:
+        self.state = state
+        self.connects = 0
+        self.disconnects = 0
+
+    @property
+    def connection_state(self) -> ConnectionState:
+        return self.state
+
+    def set_state_listener(self, listener) -> None:
+        return None
+
+    async def connect(self) -> None:
+        self.connects += 1
+        self.state = ConnectionState.CONNECTED
+
+    async def disconnect(self) -> None:
+        self.disconnects += 1
+        self.state = ConnectionState.DISCONNECTED
+
+
 def _build_app(
     bus: EventBus | None = None,
+    simulator: Any | None = None,
 ) -> tuple[TestClient, EventBus, _InjectStub]:
     bus = bus or EventBus()
     inject = _InjectStub()
-    app = create_app(event_bus=bus, session=_session(), inject_text=inject)
+    app = create_app(
+        event_bus=bus,
+        session=_session(),
+        inject_text=inject,
+        simulator=simulator or MockSimulatorClient(log_commands=False),
+    )
     return TestClient(app), bus, inject
 
 
@@ -116,7 +149,11 @@ def test_text_send_rejects_unknown_fields():
 
 def test_control_endpoint_404_without_text_injector():
     """create_app without inject_text must not register /api/control."""
-    app = create_app(event_bus=EventBus(), session=_session())
+    app = create_app(
+        event_bus=EventBus(),
+        session=_session(),
+        simulator=MockSimulatorClient(log_commands=False),
+    )
     with TestClient(app) as c:
         assert c.post("/api/control/text", json={"text": "hi"}).status_code == 404
 
@@ -130,7 +167,12 @@ def test_text_send_dispatches_actual_callable_arg() -> None:
     async def my_inject(text: str) -> None:
         captured.append(text)
 
-    app = create_app(event_bus=bus, session=_session(), inject_text=my_inject)
+    app = create_app(
+        event_bus=bus,
+        session=_session(),
+        inject_text=my_inject,
+        simulator=MockSimulatorClient(log_commands=False),
+    )
     with TestClient(app) as c:
         c.post("/api/control/text", json={"text": "hi"})
     assert captured == ["hi"]
@@ -320,3 +362,57 @@ async def test_single_turn_reset_ignores_upstream() -> None:
         FrameDirection.UPSTREAM,
     )
     assert calls == 0
+
+
+# ---------- /api/control/simulator -----------------------------------------
+
+
+def test_simulator_state_reports_current_link_state():
+    """The dashboard needs a starting value: events only report *changes*."""
+    client, _, _ = _build_app(simulator=_LinkStub(ConnectionState.STALE))
+    res = client.get("/api/control/simulator")
+    assert res.status_code == 200
+    assert res.json()["state"] == "stale"
+
+
+def test_simulator_connect_invokes_the_backend():
+    stub = _LinkStub(ConnectionState.DISCONNECTED)
+    client, _, _ = _build_app(simulator=stub)
+    res = client.post("/api/control/simulator/connect")
+    assert res.status_code == 200
+    assert stub.connects == 1
+    assert res.json()["state"] == "connected"
+
+
+def test_simulator_disconnect_invokes_the_backend():
+    stub = _LinkStub(ConnectionState.CONNECTED)
+    client, _, _ = _build_app(simulator=stub)
+    res = client.post("/api/control/simulator/disconnect")
+    assert res.status_code == 200
+    assert stub.disconnects == 1
+    assert res.json()["state"] == "disconnected"
+
+
+def test_connect_without_a_simulator_running_is_not_an_error():
+    """No simulator to reach is a normal state, not a failed request.
+
+    The backend keeps trying in the background, so the route reports
+    ``connecting`` with a 200 rather than pretending the request failed.
+    """
+
+    class _NeverConnects(_LinkStub):
+        async def connect(self) -> None:
+            self.connects += 1
+            self.state = ConnectionState.CONNECTING
+
+    stub = _NeverConnects(ConnectionState.DISCONNECTED)
+    client, _, _ = _build_app(simulator=stub)
+    res = client.post("/api/control/simulator/connect")
+    assert res.status_code == 200
+    assert res.json()["state"] == "connecting"
+
+
+def test_mock_simulator_reports_connected():
+    """The mock has no link, so the dashboard should show a healthy bridge."""
+    client, _, _ = _build_app()
+    assert client.get("/api/control/simulator").json()["state"] == "connected"
