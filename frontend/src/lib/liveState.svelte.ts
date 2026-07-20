@@ -7,12 +7,13 @@
  * source of truth for live data -- do not duplicate fields into local state.
  */
 
-import { EventStream, fetchSession } from './api';
+import { EventStream, fetchSession, fetchSimulatorState } from './api';
 import type {
   AgentEvent,
   ConnectionState,
   SessionInfo,
   ShipStateEvent,
+  SimulatorConnectionState,
   TurnMetricsEvent
 } from './api';
 import type { Entry } from './components/conversation';
@@ -23,7 +24,13 @@ const MAX_ENTRIES = 500;
 const MAX_TURNS = 200;
 
 export const live = $state({
+  /** Browser -> backend WebSocket. Not the same thing as `simulator` below:
+   *  this dashboard can be perfectly connected to a backend that has lost the
+   *  ship. */
   connection: 'connecting' as ConnectionState,
+  /** Backend -> simulator link. `null` until first known (the backend may not
+   *  expose the link routes at all, e.g. no simulator wired in). */
+  simulator: null as SimulatorConnectionState | null,
   session: null as SessionInfo | null,
   entries: [] as Entry[],
   shipState: null as ShipStateEvent | null,
@@ -42,10 +49,16 @@ function actionLabel(action: string, details: Record<string, unknown>): string {
   // for the conversation panel. Keep the prefix matching the action.type
   // so operators can grep for it in the audit log.
   if (action === 'rudder' && 'direction' in details && 'degrees' in details) {
-    return `rudder ${details.direction} ${details.degrees}°`;
+    // A rudder action is a helm order: degrees is the rudder angle held, not a
+    // heading change. Zero is midships.
+    return details.degrees === 0
+      ? 'rudder midships'
+      : `rudder ${details.direction} ${details.degrees}°`;
   }
-  if (action === 'throttle' && 'speed' in details) {
-    return `throttle ${details.speed} kn`;
+  if (action === 'throttle') {
+    // Either form may be present: a telegraph position, or knots.
+    if ('order' in details) return `telegraph ${String(details.order).replace(/_/g, ' ')}`;
+    if ('speed' in details) return `throttle ${details.speed} kn`;
   }
   if (action === 'navigation' && 'course' in details) {
     return `navigation ${details.course}°`;
@@ -89,6 +102,9 @@ function onEvent(ev: AgentEvent) {
     case 'turn_metrics':
       live.turnMetrics = live.turnMetrics.concat(ev).slice(-MAX_TURNS);
       break;
+    case 'connection_state':
+      live.simulator = ev.state;
+      break;
   }
 }
 
@@ -104,6 +120,12 @@ function refreshSnapshots(): void {
   fetchSession()
     .then((info) => (live.session = info))
     .catch((err) => console.warn('GET /api/session failed', err));
+  // The link state is pushed on every *change*, so without an initial read the
+  // panel would sit blank until the next transition -- which on a healthy link
+  // never comes.
+  fetchSimulatorState()
+    .then((res) => (live.simulator = res.state))
+    .catch((err) => console.warn('GET /api/control/simulator failed', err));
 }
 
 /**

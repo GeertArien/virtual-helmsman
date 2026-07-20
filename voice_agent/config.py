@@ -26,12 +26,13 @@ from __future__ import annotations
 
 import copy
 import os
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from voice_agent.backends.simulator.base import EngineOrder
 from voice_agent.qdrant import api_key_headers
@@ -179,9 +180,49 @@ class LlmConfig(_Base):
 
 
 class SimulatorRealConfig(_Base):
-    host: str = "127.0.0.1"
-    port: int = 9100
-    connect_timeout_seconds: float = 2.0
+    """Endpoint and link-supervision settings for the real simulator.
+
+    The transport needs two address/port pairs, not one: the link is
+    connectionless, so each side independently says where it sends and where it
+    listens. The two sides are mirror images -- the simulator sends to the port
+    we listen on, and vice versa; change both sides together or the link goes
+    quiet with no error anywhere.
+
+    The ports and frame rate are properties of the simulator installation and
+    ship with the vendor integration notes -- they are deliberately **not**
+    recorded in this repository. ``0`` means "not configured"; the real backend
+    refuses to build until real values are set (in a local config file, never
+    committed).
+    """
+
+    remote_host: str = "127.0.0.1"
+    remote_port: int = 0  # we send here; the simulator listens here
+    # Loopback by default, deliberately: this socket *believes* whatever it
+    # receives -- there is no authentication on the link, so a wide bind lets
+    # any host on the network feed the agent fake ship state (and mark the
+    # link "connected" with no simulator running). Set 0.0.0.0 (or a specific
+    # interface) only when the simulator genuinely runs on another machine.
+    local_host: str = "127.0.0.1"
+    local_port: int = 0  # we listen here; the simulator sends here
+
+    # How long connect() waits for the first frame before reporting the link as
+    # not established. It keeps trying regardless -- this only decides when the
+    # state stops being "connecting".
+    connect_timeout_seconds: float = 5.0
+
+    # Nominal frame rate of the simulator's broadcast, used to judge link
+    # health and to pace the session thread. Comes with the vendor integration.
+    expected_fps: float = 0.0
+
+    # Frames are continuous on a live link, so silence is the only loss signal
+    # available. Tolerate a few missed frames before declaring the link stale.
+    stale_after_missed_frames: float = 20.0
+
+    # Reconnect backoff. The link is cheap to re-establish and retrying is
+    # harmless, so this goes on forever -- capped so a long outage does not turn
+    # into a long silence after the simulator returns.
+    reconnect_initial_seconds: float = 1.0
+    reconnect_max_seconds: float = 15.0
 
 
 class SimulatorMockConfig(_Base):
@@ -194,6 +235,50 @@ class SimulatorConfig(_Base):
     backend: Literal["real", "mock"] = "mock"
     real: SimulatorRealConfig = Field(default_factory=SimulatorRealConfig)
     mock: SimulatorMockConfig = Field(default_factory=SimulatorMockConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_real_keys(cls, data: Any) -> Any:
+        """Handle the pre-rename ``simulator.real`` keys (``host``/``port``).
+
+        Those keys configured an integration that was never implemented (the
+        old ``real`` backend was all NotImplementedError stubs), yet every
+        previously shipped config carried them -- including mock-backend
+        configs where the block is inert. With ``extra="forbid"`` they would
+        fail validation and stop the agent from starting at all.
+
+        So: a *mock* user's stale block is dropped with a warning -- refusing
+        to start over dead keys would punish people the rename cannot affect.
+        A *real* user must decide what the new fields should be (the link now
+        needs a listen endpoint as well as a send endpoint), so that stays a
+        hard error, but one that names the rename instead of pydantic's bare
+        "extra inputs are not permitted".
+        """
+        if not isinstance(data, dict):
+            return data
+        real = data.get("real")
+        if not isinstance(real, dict):
+            return data
+        legacy = [key for key in ("host", "port") if key in real]
+        if not legacy:
+            return data
+        if data.get("backend") == "real":
+            raise ValueError(
+                "simulator.real was reworked: 'host'/'port' are now "
+                "'remote_host'/'remote_port' (where the simulator listens) "
+                "plus 'local_host'/'local_port' (where this agent listens) -- "
+                "the link needs both endpoints. See "
+                "config.examples/config.real_sim.yaml for a working block."
+            )
+        for key in legacy:
+            real.pop(key)
+        warnings.warn(
+            "config: dropped obsolete simulator.real keys "
+            f"{legacy} (renamed to remote_*/local_*; harmless while "
+            "simulator.backend is 'mock', but update the file)",
+            stacklevel=2,
+        )
+        return data
 
 
 class AudioConfig(_Base):

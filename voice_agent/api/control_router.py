@@ -1,10 +1,16 @@
-"""HTTP endpoint for injecting typed commands into the pipeline.
+"""HTTP endpoints for driving the agent from the dashboard.
 
-One route mounted at ``/api/control``:
+Routes mounted at ``/api/control``:
 
 * ``POST /api/control/text`` -- inject a typed command as a user turn.
   Body ``{text}``. The reply surfaces in the transcript panel and the action
   drives the shared simulator, exactly as a spoken command would.
+* ``GET  /api/control/simulator`` -- current link state. The dashboard needs a
+  starting value on page load: ``connection_state`` events only report
+  *changes*, and a change may not come for minutes.
+* ``POST /api/control/simulator/connect`` / ``.../disconnect`` -- open or close
+  the link by hand, e.g. to release the ship before someone else takes the
+  console, or to retry immediately rather than wait out the backoff.
 
 Voice input is the browser-audio (WebRTC) path; this route is the dashboard
 chatbox. The router takes a single ``inject_text`` callable instead of leaking
@@ -32,6 +38,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from voice_agent.api.events import EventBus, TranscriptEvent
+from voice_agent.backends.simulator.base import SimulatorClient
 from voice_agent.logging_setup import get_logger
 
 # Async function signature for "inject a user-typed command as one turn".
@@ -58,8 +65,14 @@ def create_control_router(
     *,
     event_bus: EventBus,
     inject_text: TextInjector,
+    simulator: SimulatorClient | None = None,
 ) -> APIRouter:
-    """Build the ``/api/control`` router bound to a text injector."""
+    """Build the ``/api/control`` router bound to a text injector.
+
+    Without a ``simulator`` the chatbox still works and the link routes are
+    simply not registered -- the same shape the app already uses for its other
+    optional route families.
+    """
     router = APIRouter(prefix="/api/control", tags=["control"])
     log = get_logger("api.control")
 
@@ -92,5 +105,39 @@ def create_control_router(
             "status": "queued",
             "ts": datetime.now(timezone.utc).isoformat(),
         }
+
+    if simulator is None:
+        return router
+
+    def _state_payload() -> dict[str, Any]:
+        return {
+            "state": simulator.connection_state.value,
+            "ts": datetime.now(timezone.utc).isoformat(),
+        }
+
+    @router.get("/simulator")
+    async def simulator_state() -> dict[str, Any]:
+        """Current link state, for the dashboard's initial render."""
+        return _state_payload()
+
+    @router.post("/simulator/connect")
+    async def simulator_connect() -> dict[str, Any]:
+        """Open the link.
+
+        Returns the state reached, which may still be ``connecting``: with no
+        simulator running there is nothing to connect *to*, and the backend
+        keeps trying in the background rather than failing. That is a normal
+        answer here, not an error.
+        """
+        await simulator.connect()
+        log.info("simulator_connect_requested", state=simulator.connection_state.value)
+        return _state_payload()
+
+    @router.post("/simulator/disconnect")
+    async def simulator_disconnect() -> dict[str, Any]:
+        """Close the link and stop reconnecting until asked again."""
+        await simulator.disconnect()
+        log.info("simulator_disconnect_requested", state=simulator.connection_state.value)
+        return _state_payload()
 
     return router

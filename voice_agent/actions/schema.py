@@ -11,8 +11,8 @@ The vocabulary is defined by the helmsman system prompt
 the same on-the-wire action shape; the `langgraph` backend wraps the RAG
 branch in a synthetic ``answer`` action (see :class:`AnswerAction`). The
 simulator-side translation lives in :mod:`voice_agent.actions.dispatch`; the
-simulator client itself still speaks its narrower native protocol
-(``set_heading`` / ``set_engine_telegraph`` / ``get_state``).
+simulator client itself speaks conning orders
+(``set_rudder`` / ``set_engine_telegraph`` / ``get_state``).
 
 ``multi_step`` from the prompt is intentionally omitted -- v1 dispatches one
 action per turn.
@@ -23,8 +23,23 @@ from __future__ import annotations
 import json
 from typing import Annotated, Literal, Union
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, model_validator
 
+# The nine telegraph positions, as the LLM may name them. Kept as a Literal
+# rather than importing the simulator's EngineOrder enum: this module defines
+# the LLM-facing contract and must not depend on a backend package. Dispatch
+# maps one to the other, and a mismatch fails loudly there.
+EngineOrderLiteral = Literal[
+    "full_astern",
+    "half_astern",
+    "slow_astern",
+    "dead_slow_astern",
+    "stop",
+    "dead_slow_ahead",
+    "slow_ahead",
+    "half_ahead",
+    "full_ahead",
+]
 
 # Safety limits, lifted verbatim from the n8n system prompt. Repeating them
 # here as Pydantic constraints is belt-and-suspenders: the prompt teaches the
@@ -49,19 +64,43 @@ class RudderAction(BaseModel):
 
 
 class ThrottleAction(BaseModel):
-    """Set the ship's speed. The dispatcher maps knots to a telegraph order.
+    """An engine order.
 
-    ``unit`` is fixed to ``"knots"`` in v1 -- the prompt doesn't teach the LLM
-    any other unit, and a freeform unit field would be a footgun.
+    Two ways to say it, in order of preference:
+
+    * ``order`` -- a telegraph position ("half ahead"). This is what a conning
+      officer actually orders, and what the telegraph can actually represent,
+      so the prompt teaches it first.
+    * ``speed`` -- knots ("make turns for fifteen knots"). A real order too,
+      but the 9-position telegraph cannot encode every speed, so the dispatcher
+      picks the nearest position (see ``dispatch._knots_to_telegraph``).
+
+    At least one must be present; ``order`` wins if both are. ``unit`` is fixed
+    to ``"knots"`` -- the prompt teaches no other unit, and a freeform unit
+    field would be a footgun.
     """
 
     type: Literal["throttle"]
-    speed: Annotated[float, Field(ge=-MAX_SPEED_KNOTS, le=MAX_SPEED_KNOTS)]
+    order: EngineOrderLiteral | None = None
+    speed: Annotated[float, Field(ge=-MAX_SPEED_KNOTS, le=MAX_SPEED_KNOTS)] | None = None
     unit: Literal["knots"] = "knots"
+
+    @model_validator(mode="after")
+    def _require_order_or_speed(self) -> ThrottleAction:
+        if self.order is None and self.speed is None:
+            raise ValueError("throttle needs either 'order' (telegraph) or 'speed' (knots)")
+        return self
 
 
 class NavigationAction(BaseModel):
-    """Steer to an absolute compass course (0-359)."""
+    """A course order: steer and hold an absolute compass course (0-359).
+
+    Still parsed -- the LLM must be able to *recognise* "steer zero-nine-zero"
+    -- but the dispatcher refuses it in v1: holding a course is a closed loop
+    against the compass that the simulator has no setpoint for, and which in
+    real pilotage is the helmsman's own work. See
+    :data:`voice_agent.actions.dispatch.COURSE_ORDER_REFUSAL`.
+    """
 
     type: Literal["navigation"]
     course: Annotated[int, Field(ge=0, le=HEADING_MAX)]
@@ -215,7 +254,21 @@ RESPONSE_FORMAT: dict = {
                             "enum": ["port", "starboard"],
                         },
                         "degrees": {"type": "number"},
-                        # throttle
+                        # throttle -- `order` is preferred over `speed`
+                        "order": {
+                            "type": "string",
+                            "enum": [
+                                "full_astern",
+                                "half_astern",
+                                "slow_astern",
+                                "dead_slow_astern",
+                                "stop",
+                                "dead_slow_ahead",
+                                "slow_ahead",
+                                "half_ahead",
+                                "full_ahead",
+                            ],
+                        },
                         "speed": {"type": "number"},
                         "unit": {"type": "string", "enum": ["knots"]},
                         # navigation

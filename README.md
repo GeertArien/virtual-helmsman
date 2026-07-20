@@ -47,8 +47,8 @@ models emit far less reliably. A processor parses that object, dispatches
 the action to a `SimulatorClient` abstraction, and forwards only the spoken
 text to TTS.
 
-`SimulatorClient` has two interchangeable implementations: `real` (wraps
-the in-house UDP-syncing library) and `mock` (in-memory, the dev
+`SimulatorClient` has two interchangeable implementations: `real` (drives
+the hand-dropped in-house integration) and `mock` (in-memory, the dev
 default).
 
 The backend additionally handles document ingestion with human-in-the-loop
@@ -59,15 +59,15 @@ document/audit/review routes drive that flow (see
 
 ## Requirements
 
-- **Python 3.11–3.13.** *Not 3.14* — `kokoro-onnx` (the default TTS) and
-  `pythonnet` have no 3.14 wheels yet. Develop on 3.13.
+- **Python 3.11–3.13.** *Not 3.14* — `kokoro-onnx` (the default TTS) has no
+  3.14 wheels yet. Develop on 3.13.
 - **NVIDIA GPU**, pure CUDA. ≥ 8 GB VRAM comfortable; ≥ 4 GB floor with
   Parakeet-0.6B + Kokoro. No DirectML, no ROCm, no Vulkan.
 - A reachable **OpenAI-compatible `/v1` LLM endpoint** (e.g. LM Studio).
   The `langgraph` backend additionally needs **qdrant** for the RAG branch.
-- **Windows** is required only for the `real` simulator backend (it loads
-  a managed .NET DLL via `pythonnet`). The `mock` backend is
-  platform-agnostic.
+- The `real` simulator backend needs the hand-dropped vendor integration and
+  inherits its platform requirements (see *Integrating the real simulator*).
+  The `mock` backend is platform-agnostic.
 
 ## CUDA setup
 
@@ -114,12 +114,7 @@ Optional extras:
 | Extra        | Adds                                  | When                                   |
 |--------------|---------------------------------------|----------------------------------------|
 | `cuda`       | `nvidia-*-cu12` (CUDA 12.x + cuDNN 9) | Running the ONNX models on the GPU      |
-| `real-sim`   | `pythonnet`                           | Integrating the real simulator backend |
 | `nemo`       | `nemo-toolkit[asr]`                   | Using the `parakeet_nemo` STT backend  |
-
-```bash
-pip install -e ".[dev,cuda,real-sim]"  # for real-simulator integration (Windows)
-```
 
 Versions are pinned in `pyproject.toml` as of May 2026. After the first
 successful install on the target client, lock the full transitive set
@@ -375,27 +370,41 @@ No tests make network calls or load GPU models.
 
 ## Integrating the real simulator
 
-The in-house simulator integration — Python wrapper classes plus a managed .NET
-DLL — is **not** distributed via pip. Vendor it by hand:
+The in-house simulator integration is **not** distributed via pip and **not**
+published in this repo — what it consists of, how to build it, and its runtime
+prerequisites are documented in the **private** simulator repository. To
+integrate:
 
-1. Drop the wrapper `.py` files and the .NET DLL into
+1. Obtain the vendor integration files and drop them into
    [`voice_agent/backends/simulator/vendor/`](voice_agent/backends/simulator/vendor/).
-   That directory is intentionally tracked by git (see its `README.md`).
-2. `pip install -e ".[real-sim]"` to add `pythonnet` (Windows).
-3. Fill in the `TODO(integration)` stubs in
-   [`voice_agent/backends/simulator/real.py`](voice_agent/backends/simulator/real.py):
-   - `_connect()` — import the wrapper class and construct it with `host`/`port`.
-   - `_to_ship_state()` — map the wrapper's fields onto `ShipState`.
-   - `_set_heading_sync()`, `_set_engine_telegraph_sync()`, `_get_state_sync()`,
-     `_close_sync()` — call the actual wrapper methods.
-   The adapter already offloads these synchronous calls via `asyncio.to_thread()`
-   so blocking UDP I/O never stalls the Pipecat event loop.
-4. Set `simulator.backend: real` in config (or `SIMULATOR_BACKEND=real`), or use
-   `config.examples/config.real_sim.yaml`.
+   That directory is **git-ignored**: none of it may be published here.
+2. Set `simulator.backend: real` in config (or `SIMULATOR_BACKEND=real`), start
+   from `config.examples/config.real_sim.yaml`, and fill in the `simulator.real`
+   values from the vendor integration notes **in a local copy** — the working
+   endpoint values are deliberately not recorded in this repository.
 
-**Platform:** the `real` backend is Windows-only because the .NET DLL is loaded
-via `pythonnet`. Do STT/TTS/pipeline development with the `mock` backend on any
-OS; only real-simulator integration is Windows-pinned.
+No code changes are needed: `real.py` drives the integration through the
+vendor-neutral `SimulatorWrapper` protocol in
+[`wrapper_api.py`](voice_agent/backends/simulator/wrapper_api.py), and loads it
+lazily, so its absence is a clear runtime message rather than an import error.
+
+**Lifecycle.** The link is connectionless and its loss is silent, so the backend
+connects lazily, judges health by whether frames are still arriving, and rebuilds
+the session whenever it goes quiet:
+
+- Starting the agent **without** a running simulator is fine — it comes up on a
+  quiet bridge, stays useful for questions, and connects when the simulator
+  appears.
+- A simulator that stops, crashes, or ends its exercise is noticed within a
+  configurable number of missed frames, and reconnected automatically with
+  backoff.
+- Orders issued while the link is down **fail fast** ("Lost contact with the
+  bridge") rather than being queued — a helm order must not execute minutes late.
+
+**Platform:** the `real` backend inherits the vendor integration's platform
+requirements. Do STT/TTS/pipeline development with the `mock` backend on any
+OS. The lifecycle above is tested against a fake wrapper, so it runs in CI on
+Linux too.
 
 ## Project layout
 
@@ -475,5 +484,5 @@ frontend boots before all integrations are wired. Then
 
 English-only; single local user (browser audio is intended for one browser
 at a time); no persona/voice cloning; no cross-run memory; this client does
-not host the LLM, implement the UDP protocol, or model ship dynamics in the
-mock.
+not host the LLM, implement the simulator's transport, or model ship dynamics
+in the mock.

@@ -81,12 +81,27 @@ class ActionRefusedEvent(_BaseEvent):
 
 
 class ShipStateEvent(_BaseEvent):
-    """Latest known ship state (after a dispatch that returned it)."""
+    """Latest known ship state.
+
+    Published after every dispatch that returned state, and periodically (2 Hz)
+    by the telemetry publisher while the simulator link is up -- the ship keeps
+    moving between orders, so the panel must not freeze at the last dispatch.
+
+    ``rudder_angle_deg`` is the *actual* angle (negative port, positive
+    starboard), which lags an order by a few seconds -- a real rudder slews at
+    only a few degrees per second. ``sim_time_s`` is the exercise clock;
+    ``lat_deg``/``lon_deg`` the GPS position in signed decimal degrees. All
+    three are ``None`` on backends that cannot provide them (the mock).
+    """
 
     kind: Literal["ship_state"] = "ship_state"
     heading_deg: float
     speed_kn: float
     engine_order: str
+    rudder_angle_deg: float
+    sim_time_s: float | None = None
+    lat_deg: float | None = None
+    lon_deg: float | None = None
 
 
 class TurnMetricsEvent(_BaseEvent):
@@ -95,6 +110,22 @@ class TurnMetricsEvent(_BaseEvent):
     kind: Literal["turn_metrics"] = "turn_metrics"
     turn_index: int
     metrics_ms: dict[str, float]
+
+
+class ConnectionStateEvent(_BaseEvent):
+    """The link to the simulator changed state.
+
+    Published on every transition, so the dashboard can say whether orders will
+    reach the ship *before* one is given. Without this the operator's only clue
+    is a spoken "lost contact with the bridge" after the fact -- and on the real
+    backend a dead link is otherwise silent.
+
+    ``state`` is a
+    :class:`~voice_agent.backends.simulator.base.ConnectionState` value.
+    """
+
+    kind: Literal["connection_state"] = "connection_state"
+    state: str
 
 
 # Union for serialization on the wire. Pydantic does not need a discriminated
@@ -107,6 +138,7 @@ Event = (
     | ActionRefusedEvent
     | ShipStateEvent
     | TurnMetricsEvent
+    | ConnectionStateEvent
 )
 
 

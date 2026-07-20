@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from voice_agent.backends.simulator.base import EngineOrder
+from voice_agent.backends.simulator.base import ConnectionState, EngineOrder
 from voice_agent.backends.simulator.mock import MockSimulatorClient, build_simulator
 
 
@@ -21,14 +21,31 @@ async def test_initial_state() -> None:
     assert state.heading_deg == 42.0
     assert state.engine_order is EngineOrder.SLOW_AHEAD
     assert state.speed_kn == 6.0
+    assert state.rudder_angle_deg == 0.0
 
 
-async def test_set_heading_normalises_to_0_360() -> None:
+async def test_set_rudder_records_signed_angle() -> None:
     client = _client()
-    assert (await client.set_heading(370)).heading_deg == 10.0
-    assert (await client.set_heading(-10)).heading_deg == 350.0
-    assert (await client.set_heading(360)).heading_deg == 0.0
-    assert (await client.set_heading(270)).heading_deg == 270.0
+    assert (await client.set_rudder(-10)).rudder_angle_deg == -10.0
+    assert (await client.set_rudder(35)).rudder_angle_deg == 35.0
+    assert (await client.set_rudder(0)).rudder_angle_deg == 0.0
+
+
+async def test_set_rudder_does_not_steer_the_ship() -> None:
+    """The mock records the order; it deliberately models no turn."""
+    client = _client(initial_heading=90)
+    state = await client.set_rudder(-20)
+    assert state.rudder_angle_deg == -20.0
+    assert state.heading_deg == 90.0
+
+
+async def test_connection_lifecycle_is_trivially_connected() -> None:
+    client = _client()
+    assert client.connection_state is ConnectionState.CONNECTED
+    await client.connect()
+    await client.disconnect()
+    # Never anything but connected: there is no link to lose.
+    assert client.connection_state is ConnectionState.CONNECTED
 
 
 @pytest.mark.parametrize(
@@ -53,26 +70,28 @@ async def test_engine_order_maps_to_speed(order: EngineOrder, expected_speed: fl
 
 
 async def test_command_sequence_accumulates_state() -> None:
-    client = _client()
-    await client.set_heading(90)
+    client = _client(initial_heading=90)
+    await client.set_rudder(-15)
     await client.set_engine_telegraph(EngineOrder.HALF_AHEAD)
     state = await client.get_state()
     assert state.heading_deg == 90.0
+    assert state.rudder_angle_deg == -15.0
     assert state.engine_order is EngineOrder.HALF_AHEAD
     assert state.speed_kn == 12.0
 
 
 async def test_command_history_records_commands_in_order() -> None:
     client = _client()
-    await client.set_heading(180)
+    await client.set_rudder(20)
     await client.set_engine_telegraph(EngineOrder.SLOW_AHEAD)
     await client.get_state()  # queries are not recorded
 
     history = client.command_history
-    assert [rec.command for rec in history] == ["set_heading", "set_engine_telegraph"]
-    assert history[0].arguments == {"degrees": 180}
+    assert [rec.command for rec in history] == ["set_rudder", "set_engine_telegraph"]
+    assert history[0].arguments == {"angle_deg": 20}
     assert history[1].arguments == {"order": "slow_ahead"}
-    assert history[1].result.heading_deg == 180.0
+    # The rudder order persists across later commands: it is held, not pulsed.
+    assert history[1].result.rudder_angle_deg == 20.0
 
 
 async def test_close_is_noop() -> None:

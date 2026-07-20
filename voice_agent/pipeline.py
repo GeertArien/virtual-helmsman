@@ -42,9 +42,9 @@ from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from voice_agent.actions.processor import JsonActionProcessor
 from voice_agent.actions.prompt import SYSTEM_PROMPT
-from voice_agent.api.events import EventBus, UserTranscriptObserver
+from voice_agent.api.events import ConnectionStateEvent, EventBus, UserTranscriptObserver
 from voice_agent.backends.llm.factory import create_llm
-from voice_agent.backends.simulator.base import SimulatorClient
+from voice_agent.backends.simulator.base import ConnectionState, SimulatorClient
 from voice_agent.backends.simulator.factory import create_simulator
 from voice_agent.backends.stt.factory import create_stt
 from voice_agent.backends.tts.factory import create_tts
@@ -227,6 +227,15 @@ def build_shared_backends(config: AppConfig, session_id: str) -> SharedBackends:
     # --- simulator ------------------------------------------------------
     # One SimulatorClient, built once (the ship is a single shared entity).
     simulator = create_simulator(config.simulator)
+
+    # Surface link transitions to the dashboard. The backend takes a plain
+    # callback rather than the bus itself, so the simulator package never
+    # imports the API layer; this is the one place that knows about both.
+    if event_bus is not None:
+        def _publish_connection_state(state: ConnectionState) -> None:
+            event_bus.publish(ConnectionStateEvent(state=state.value))
+
+        simulator.set_state_listener(_publish_connection_state)
 
     log.info(
         "shared_backends_built",

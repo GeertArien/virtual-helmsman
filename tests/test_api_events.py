@@ -20,6 +20,7 @@ from voice_agent.api.events import (
     ActionDispatchedEvent,
     AssistantReplyEvent,
     EventBus,
+    ConnectionStateEvent,
     ShipStateEvent,
     TranscriptEvent,
     TurnMetricsEvent,
@@ -45,8 +46,11 @@ def test_each_event_kind_is_unique() -> None:
         TranscriptEvent(text="x"),
         AssistantReplyEvent(text="x"),
         ActionDispatchedEvent(action="navigation", details={"course": 90}),
-        ShipStateEvent(heading_deg=90, speed_kn=12, engine_order="full_ahead"),
+        ShipStateEvent(
+            heading_deg=90, speed_kn=12, engine_order="full_ahead", rudder_angle_deg=-10
+        ),
         TurnMetricsEvent(turn_index=0, metrics_ms={"voice_to_voice_ms": 1500}),
+        ConnectionStateEvent(state="stale"),
     ]
     kinds = {ev.kind for ev in samples}  # type: ignore[attr-defined]
     assert len(kinds) == len(samples)
@@ -206,7 +210,14 @@ def test_websocket_streams_published_events() -> None:
                     break
                 ws.send_text("ping")  # no-op; just yields to the server task
             bus.publish(AssistantReplyEvent(text="aye"))
-            bus.publish(ShipStateEvent(heading_deg=270, speed_kn=12, engine_order="full_ahead"))
+            bus.publish(
+                ShipStateEvent(
+                    heading_deg=270,
+                    speed_kn=12,
+                    engine_order="full_ahead",
+                    rudder_angle_deg=-10,
+                )
+            )
 
             payload = json.loads(ws.receive_text())
             assert payload["kind"] == "assistant_reply"
@@ -215,6 +226,7 @@ def test_websocket_streams_published_events() -> None:
             payload = json.loads(ws.receive_text())
             assert payload["kind"] == "ship_state"
             assert payload["heading_deg"] == 270
+            assert payload["rudder_angle_deg"] == -10
 
 
 # -- Config integration ------------------------------------------------------

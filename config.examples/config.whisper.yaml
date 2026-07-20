@@ -33,10 +33,6 @@ lm_studio:
 
 simulator:
   backend: mock
-  real:
-    host: 127.0.0.1
-    port: 9100
-    connect_timeout_seconds: 2
   mock:
     initial_heading: 0
     initial_engine_order: stop

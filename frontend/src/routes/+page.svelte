@@ -19,7 +19,7 @@
     {/if}
   </section>
   <section class="right">
-    <ShipStatePanel state={live.shipState} />
+    <ShipStatePanel ship={live.shipState} link={live.simulator} />
     <MetricsPanel turns={live.turnMetrics} />
   </section>
 </main>

@@ -1,5 +1,7 @@
-# Example: integrate against the real (UDP-syncing) simulator.
-# Differs from the default only in simulator.backend. Windows-only.
+# Example: integrate against the real simulator.
+# Differs from the default only in the simulator block. Needs the vendor
+# integration hand-dropped -- see
+# voice_agent/backends/simulator/vendor/README.md.
 
 stt:
   backend: parakeet_onnx
@@ -38,11 +40,31 @@ qdrant:
   collection: maritime_hybrid
 
 simulator:
-  backend: real                    # wraps the vendored pythonnet wrappers
+  backend: real                    # drives the locally vendored wrapper
   real:
-    host: 127.0.0.1
-    port: 9100
-    connect_timeout_seconds: 2
+    # Two pairs, not one: the link is connectionless, so each side says where
+    # it sends and where it listens. The two sides are mirror images -- change
+    # both together, or the link goes quiet with no error anywhere.
+    #
+    # The ports and frame rate are properties of the simulator installation
+    # and come with the vendor integration notes. They are deliberately not
+    # recorded in this repository: 0 means "not configured", and the real
+    # backend refuses to start until you set the working values in a LOCAL
+    # copy of this file (never commit them).
+    remote_host: 127.0.0.1         # we send here; the simulator listens here
+    remote_port: 0
+    # We listen here. Loopback on purpose: the link is unauthenticated --
+    # whatever arrives on this socket is believed as ship state. Use 0.0.0.0
+    # (or a specific interface) only when the simulator runs on another host.
+    local_host: 127.0.0.1
+    local_port: 0
+    # Startup is never blocked on the simulator: if it is not running yet, the
+    # agent comes up on a quiet bridge and keeps trying in the background.
+    connect_timeout_seconds: 5
+    expected_fps: 0                # simulator broadcast rate; comes with the vendor integration
+    stale_after_missed_frames: 20  # frames of silence tolerated before the link counts as stale
+    reconnect_initial_seconds: 1
+    reconnect_max_seconds: 15
   mock:
     initial_heading: 0
     initial_engine_order: stop
