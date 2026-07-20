@@ -51,13 +51,13 @@ unit tests:
 
 | n8n node | Port |
 |---|---|
-| Clean Text | `ingestion/chunking.py::clean_pdf_text` (header/footer frequency filter, page-number strip) |
+| Clean Text | `kb/ingestion/chunking.py::clean_pdf_text` (header/footer frequency filter, page-number strip) |
 | Chunk: Paragraph Aware / Fixed Size | `chunk_paragraph_aware` / `chunk_fixed_size` (800/75/725/400 constants; same strategy tags) |
-| Chunk + Complete Metadata | `ingestion/metadata.py::complete_metadata` (chunk ids, page estimate, char offsets, `point_id`) |
+| Chunk + Complete Metadata | `kb/ingestion/metadata.py::complete_metadata` (chunk ids, page estimate, char offsets, `point_id`) |
 | Apply Decisions | `apply_decisions` (default-approve, 50-char edit floor, all-rejected sentinel) |
 | Calculate avg_len | `compute_avg_len` |
 | Message a model | `SUMMARY_SYSTEM` + LangChain `ChatOpenAI` (Langfuse-traced) |
-| Create Collection / Indexes / Upsert | `ingestion/qdrant.py` (same REST bodies: named `bge-m3` dense vector + `bm25` IDF sparse, server-side BM25 inference with `avg_len`) |
+| Create Collection / Indexes / Upsert | `kb/ingestion/qdrant.py` (same REST bodies: named `bge-m3` dense vector + `bm25` IDF sparse, server-side BM25 inference with `avg_len`) |
 
 Upserted points carry the identical payload (including `hitl_reviewed: true`
 and `hitl_batch_id`), so locally-ingested chunks are indistinguishable from

@@ -29,9 +29,9 @@ from typing import Any, Awaitable, Callable
 
 import httpx
 
-from voice_agent.ingestion import chunking, metadata, qdrant
-from voice_agent.ingestion.pdf import PdfExtractionError, extract_pdf_text
-from voice_agent.ingestion.store import IngestionStore
+from voice_agent.kb.ingestion import chunking, metadata, qdrant
+from voice_agent.kb.ingestion.pdf import PdfExtractionError, extract_pdf_text
+from voice_agent.kb.ingestion.store import IngestionStore
 from voice_agent.logging_setup import get_logger
 
 SummarizeFn = Callable[[str, str], Awaitable[str]]
@@ -160,7 +160,7 @@ class IngestionEngine:
         from langchain_core.messages import HumanMessage, SystemMessage
         from langchain_openai import ChatOpenAI
 
-        from voice_agent.backends.llm.langgraph_helmsman import tracing
+        from voice_agent import tracing
 
         handler = tracing.build_callback_handler(self._cfg)
         llm = ChatOpenAI(

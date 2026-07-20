@@ -609,7 +609,7 @@ def test_build_llm_wires_audit_writer(tmp_path: Any, monkeypatch: pytest.MonkeyP
     # The writer actually inserts into the shared audit store.
     import asyncio
 
-    from voice_agent.ingestion.store import IngestionStore
+    from voice_agent.kb.ingestion.store import IngestionStore
 
     asyncio.run(svc._audit_writer("n.v.t. (command)", "command_runtime", "ok"))
     out = IngestionStore(cfg.audit_db_path).query_audit(actie="command_runtime")

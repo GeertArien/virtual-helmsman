@@ -16,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from voice_agent.api.app import SessionInfo, create_app
-from voice_agent.api.documents import _group_documents
+from voice_agent.kb.documents import _group_documents
 from voice_agent.api.events import EventBus
 from voice_agent.config import DocumentsConfig, DocumentsRuntime
 
@@ -219,7 +219,7 @@ def test_list_documents_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     )
     # Patch AsyncClient so the router picks up the stub on creation.
-    monkeypatch.setattr("voice_agent.api.documents.httpx.AsyncClient", lambda **_: stub)
+    monkeypatch.setattr("voice_agent.kb.documents.httpx.AsyncClient", lambda **_: stub)
 
     cfg = _docs_runtime(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
@@ -242,7 +242,7 @@ def test_delete_document_counts_then_deletes(monkeypatch: pytest.MonkeyPatch) ->
         _FakeResponse(200, {"result": {"count": 7}}),
         _FakeResponse(200, {"result": {"operation_id": 1, "status": "completed"}}),
     )
-    monkeypatch.setattr("voice_agent.api.documents.httpx.AsyncClient", lambda **_: stub)
+    monkeypatch.setattr("voice_agent.kb.documents.httpx.AsyncClient", lambda **_: stub)
 
     cfg = _docs_runtime(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
@@ -260,7 +260,7 @@ def test_delete_document_counts_then_deletes(monkeypatch: pytest.MonkeyPatch) ->
 def test_delete_document_returns_404_when_no_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
     stub = _StubClient()
     stub.queue(_FakeResponse(200, {"result": {"count": 0}}))
-    monkeypatch.setattr("voice_agent.api.documents.httpx.AsyncClient", lambda **_: stub)
+    monkeypatch.setattr("voice_agent.kb.documents.httpx.AsyncClient", lambda **_: stub)
 
     cfg = _docs_runtime(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)
@@ -276,7 +276,7 @@ def test_qdrant_unreachable_returns_502(monkeypatch: pytest.MonkeyPatch) -> None
             raise httpx.ConnectError("connection refused")
 
     monkeypatch.setattr(
-        "voice_agent.api.documents.httpx.AsyncClient", lambda **_: _BoomClient()
+        "voice_agent.kb.documents.httpx.AsyncClient", lambda **_: _BoomClient()
     )
     cfg = _docs_runtime(qdrant_url="http://qdrant:6333", qdrant_collection="docs")
     app = create_app(event_bus=EventBus(), session=_session(), documents=cfg)

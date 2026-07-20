@@ -132,7 +132,9 @@ def _build_audit_writer(config: Any) -> AuditWriter | None:
     if not getattr(config, "audit_enabled", False):
         return None
 
-    from voice_agent.ingestion.store import IngestionStore
+    # One of the two blessed voice->kb crossings (see voice_agent/kb/__init__):
+    # the audit DB is shared state between the halves by design.
+    from voice_agent.kb import IngestionStore
 
     store = IngestionStore(config.audit_db_path)
 
