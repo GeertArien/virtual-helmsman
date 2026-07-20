@@ -22,17 +22,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import APIRouter, FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from voice_agent.api.config_router import create_config_router
 from voice_agent.api.control_router import TextInjector, create_control_router
-from voice_agent.api.documents import create_documents_router
 from voice_agent.api.events import EventBus
-from voice_agent.api.review import create_review_router
 from voice_agent.api.webrtc import WebRTCManager, create_webrtc_router
 from voice_agent.backends.simulator.base import SimulatorClient
 from voice_agent.config import DocumentsRuntime, IngestionRuntime
+from voice_agent.kb import create_kb_routers
 from voice_agent.logging_setup import get_logger
 
 
@@ -93,26 +92,21 @@ def create_app(
     """
     log = get_logger("api")
 
-    # Each optional router owns a long-lived httpx.AsyncClient that must be
-    # closed at shutdown. We build them before the app so the lifespan
-    # handler can reference them without an attribute dance.
-    docs_router: APIRouter | None = None
-    if documents is not None:
-        docs_router = create_documents_router(documents)
-    review_router: APIRouter | None = None
-    if review is not None:
-        # llm_model is the default ``Model`` for ingestion uploads -- keeps
-        # the doc-summary call on the same model the helmsman LLM path uses.
-        review_router = create_review_router(review, llm_model=llm_model)
+    # The knowledge-base half of the process mounts through one factory --
+    # the app knows nothing about its internals (issue #12 §6). Each KB
+    # router may own a long-lived httpx.AsyncClient that must be closed at
+    # shutdown; build them before the app so the lifespan handler can
+    # reference them without an attribute dance.
+    kb_routers = create_kb_routers(
+        documents=documents, review=review, llm_model=llm_model
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         try:
             yield
         finally:
-            for r in (docs_router, review_router):
-                if r is None:
-                    continue
+            for r in kb_routers:
                 client = getattr(r, "_http_client", None)
                 if client is not None:
                     await client.aclose()
@@ -128,10 +122,8 @@ def create_app(
         allow_headers=["*"],
     )
 
-    if docs_router is not None:
-        app.include_router(docs_router)
-    if review_router is not None:
-        app.include_router(review_router)
+    for kb_router in kb_routers:
+        app.include_router(kb_router)
     if inject_text is not None:
         app.include_router(
             create_control_router(

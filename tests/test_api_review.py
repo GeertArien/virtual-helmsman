@@ -25,9 +25,9 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from voice_agent.api.review import create_review_router
+from voice_agent.kb.review import create_review_router
 from voice_agent.config import IngestionRuntime, ReviewConfig
-from voice_agent.ingestion.engine import IngestionEngine
+from voice_agent.kb.ingestion.engine import IngestionEngine
 
 # Long enough to chunk into multiple pieces, repeated sentences keep the
 # cleaning step from classifying anything as boilerplate.
@@ -245,7 +245,7 @@ def test_all_rejected_short_circuits_to_audit(tmp_path: Path) -> None:
 
 
 def test_pdf_extraction_failure_writes_audit_row(tmp_path: Path) -> None:
-    from voice_agent.ingestion.pdf import PdfExtractionError
+    from voice_agent.kb.ingestion.pdf import PdfExtractionError
 
     stub = _StubClient()
     engine = _engine(tmp_path, stub)

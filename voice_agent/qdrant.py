@@ -1,8 +1,8 @@
 """Shared Qdrant REST helpers.
 
 Three subsystems talk to Qdrant over plain ``httpx`` (no ``qdrant-client``):
-the Documents management API (:mod:`voice_agent.api.documents`), the ingestion
-finalize phase (:mod:`voice_agent.ingestion.qdrant`), and the LangGraph RAG
+the Documents management API (:mod:`voice_agent.kb.documents`), the ingestion
+finalize phase (:mod:`voice_agent.kb.ingestion.qdrant`), and the LangGraph RAG
 retrieval branch
 (:mod:`voice_agent.backends.llm.langgraph_helmsman.retrieval`). They each used
 to hand-roll the ``api-key`` header, the collection URL, and the named-vector
