@@ -35,6 +35,12 @@ classify ─┬─ command ─────────────────�
           └─ retrieve → select → expand → answer ─────▶ END
 ```
 
+With `llm.mode: commands_only` the graph collapses to `command ─▶ END`: the
+classifier round-trip and the whole RAG branch are dropped, so every turn is a
+single LLM call and neither Qdrant nor the embedding model is needed at
+runtime. Questions get the command parser's out-of-scope refusal. This is the
+low-latency choice for a pure conning session (issue #21).
+
 | Node | n8n analogue | What it does |
 |---|---|---|
 | `classify` | Classify Intent / Parse Intent | One-word COMMAND/QUESTION classification. Anything that isn't QUESTION routes to the command branch (the safe path that never touches Qdrant). |
@@ -71,6 +77,7 @@ blocks; `llm` keeps only the backend tuning:
 llm:
   backend: langgraph
   model: unsloth/gemma-4-e4b-it
+  mode: full                           # commands_only = single-call, no classifier/RAG
   timeout_seconds: 30
   rerank: true
   expansion: true
@@ -92,6 +99,9 @@ Ready-made: [`config.examples/config.langgraph.yaml`](../config.examples/config.
 
 - **`qdrant.url` unset** → the command branch still works; a question turn
   returns a graceful error envelope instead of attempting retrieval.
+- **`mode: commands_only`** → the classifier and RAG branch are never built;
+  the qdrant/embedding settings are ignored entirely and every turn costs one
+  LLM call.
 - **`lm_studio.embedding_model`** must match the collection's dense named vector
   (`bge-m3`, 1024-dim) — swapping it is a re-ingestion event, same caveat as
   the n8n pipeline.

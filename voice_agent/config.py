@@ -165,6 +165,13 @@ class LlmConfig(_Base):
     max_retries: int = 1
 
     # --- langgraph only -------------------------------------------------
+    # ``commands_only`` drops the intent classifier and the whole RAG branch:
+    # every turn is a single LLM call to the command parser, which refuses
+    # questions as out-of-scope. That saves one LLM round-trip (~hundreds of
+    # ms) per command and removes the qdrant + embedding-model runtime
+    # dependency -- the right trade for a pure conning demo. ``full`` keeps
+    # command/question routing with hybrid-RAG answers (issue #21).
+    mode: Literal["full", "commands_only"] = "full"
     # Toggles the RAG-branch LLM reranker. False is the faster path.
     rerank: bool = True
     # Toggles RAG-branch adjacent-chunk expansion (Qdrant scroll for
@@ -376,6 +383,7 @@ class LlmRuntime:
     backend: str
     base_url: str
     model: str
+    mode: str
     timeout_seconds: float
     max_retries: int
     rerank: bool
@@ -467,6 +475,7 @@ class AppConfig(_Base):
             backend=self.llm.backend,
             base_url=self.lm_studio.base_url,
             model=self.llm.model,
+            mode=self.llm.mode,
             timeout_seconds=self.llm.timeout_seconds,
             max_retries=self.llm.max_retries,
             rerank=self.llm.rerank,

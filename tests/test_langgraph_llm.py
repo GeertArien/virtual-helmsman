@@ -478,6 +478,7 @@ def test_llm_runtime_langgraph_fields_and_qdrant_headers(monkeypatch: pytest.Mon
         }
     ).llm_runtime()
     assert rt.backend == "langgraph"
+    assert rt.mode == "full"  # classifier + RAG routing is the default
     assert rt.qdrant_collection == "maritime_hybrid"
     assert rt.embedding_model == "text-embedding-bge-m3"
     assert rt.retrieval_top_k == 20
@@ -487,6 +488,25 @@ def test_llm_runtime_langgraph_fields_and_qdrant_headers(monkeypatch: pytest.Mon
     assert rt.resolved_qdrant_headers() == {}
     monkeypatch.setenv("QDRANT_API_KEY", "secret")
     assert rt.resolved_qdrant_headers() == {"api-key": "secret"}
+
+
+def test_llm_mode_validated() -> None:
+    """``llm.mode`` is a closed enum: a typo must fail at parse time, not
+    silently run the full pipeline."""
+    from pydantic import ValidationError
+
+    from voice_agent.config import parse_config
+
+    data = {
+        "stt": {"model": "m"},
+        "tts": {"voice": "v"},
+        "llm": {"backend": "langgraph", "model": "x", "mode": "comands_only"},
+        "lm_studio": {"base_url": "http://localhost:1234/v1"},
+    }
+    with pytest.raises(ValidationError):
+        parse_config(data)
+    data["llm"]["mode"] = "commands_only"
+    assert parse_config(data).llm_runtime().mode == "commands_only"
 
 
 # ---------- runtime audit rows ------------------------------------------------
@@ -659,3 +679,62 @@ async def test_build_runner_carries_chat_input_through_graph(
     assert seen == ["turn starboard twenty degrees"] * 2
     assert result["action"]["type"] == "rudder"
     assert result["response"] == "Starboard twenty, aye."
+
+
+@pytest.mark.asyncio
+async def test_commands_only_mode_skips_the_classifier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``llm.mode: commands_only`` must be a single LLM call straight into the
+    command parser -- the whole point is dropping the classifier round-trip
+    (issue #21). A classify invocation is therefore a hard failure, not just
+    an extra call."""
+    pytest.importorskip("langgraph")
+    import langchain_openai
+
+    from voice_agent.backends.llm.langgraph_helmsman import graph as graph_mod
+    from voice_agent.config import parse_config
+
+    calls: list[str] = []
+
+    class _FakeResp:
+        def __init__(self, content: str) -> None:
+            self.content = content
+
+    class _FakeChat:
+        def __init__(self, **kwargs: Any) -> None:
+            # The classify model is the only one built with max_tokens=8.
+            self._is_classify = kwargs.get("max_tokens") == 8
+
+        async def ainvoke(self, messages: Any) -> _FakeResp:
+            assert not self._is_classify, "classifier invoked in commands_only mode"
+            calls.append(messages[-1].content)
+            return _FakeResp(
+                json.dumps(
+                    {
+                        "action": {"type": "rudder", "direction": "port", "degrees": 10},
+                        "response": "Port ten, aye.",
+                    }
+                )
+            )
+
+    monkeypatch.setattr(langchain_openai, "ChatOpenAI", _FakeChat)
+    cfg = parse_config(
+        {
+            "stt": {"model": "m"},
+            "tts": {"voice": "v"},
+            "llm": {
+                "backend": "langgraph",
+                "model": "unsloth/gemma-4-e4b-it",
+                "mode": "commands_only",
+            },
+            "lm_studio": {"base_url": "http://localhost:1234/v1"},
+        }
+    ).llm_runtime()
+    async with httpx.AsyncClient() as client:
+        runner = graph_mod.build_runner(cfg, client)
+        result = await runner("port ten")
+
+    assert calls == ["port ten"]  # exactly one LLM call for the whole turn
+    assert result["action"]["type"] == "rudder"
+    assert result["response"] == "Port ten, aye."
