@@ -18,6 +18,7 @@ turn_detection:
 llm:
   backend: langgraph              # in-backend helmsman (needs the `langgraph` extra)
   model: unsloth/gemma-4-e4b-it   # any model id the lm_studio server serves
+  mode: full                      # commands_only = single-call command parsing, no classifier/RAG (faster; questions refused; qdrant not needed)
   timeout_seconds: 30
   max_retries: 1
   rerank: true

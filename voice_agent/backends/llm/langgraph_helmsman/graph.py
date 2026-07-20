@@ -7,6 +7,10 @@ each turn:
     classify ─┬─ command ─────────────────────────────────▶ END
               └─ retrieve → select → expand → answer ─────▶ END
 
+With ``llm.mode: commands_only`` the graph collapses to ``command ─▶ END``:
+no classifier round-trip, no RAG branch, questions refused by the command
+parser itself, and no qdrant/embedding dependency at runtime (issue #21).
+
 * **classify** -- one-word intent classification (COMMAND / QUESTION).
 * **command** -- the helmsman command parser (shared system prompt +
   JSON-schema ``response_format``), shaped into the internal HelmsmanResponse.
@@ -208,25 +212,33 @@ def build_runner(
         await _audit(helpers.question_audit_row(parsed, output))
         return {"result": helpers.answer_envelope(output)}
 
-    graph = StateGraph(_TurnState)
-    graph.add_node("classify", classify_node)
-    graph.add_node("command", command_node)
-    graph.add_node("retrieve", retrieve_node)
-    graph.add_node("select", select_node)
-    graph.add_node("expand", expand_node)
-    graph.add_node("answer", answer_node)
+    commands_only = getattr(config, "mode", "full") == "commands_only"
 
-    graph.add_edge(START, "classify")
-    graph.add_conditional_edges(
-        "classify",
-        lambda state: state["intent"],
-        {"command": "command", "question": "retrieve"},
-    )
+    graph = StateGraph(_TurnState)
+    graph.add_node("command", command_node)
+    if commands_only:
+        # One LLM call per turn: no intent classifier, no RAG branch. The
+        # command parser itself refuses questions as out-of-scope, and the
+        # qdrant/embedding services are never contacted (issue #21).
+        graph.add_edge(START, "command")
+    else:
+        graph.add_node("classify", classify_node)
+        graph.add_node("retrieve", retrieve_node)
+        graph.add_node("select", select_node)
+        graph.add_node("expand", expand_node)
+        graph.add_node("answer", answer_node)
+
+        graph.add_edge(START, "classify")
+        graph.add_conditional_edges(
+            "classify",
+            lambda state: state["intent"],
+            {"command": "command", "question": "retrieve"},
+        )
+        graph.add_edge("retrieve", "select")
+        graph.add_edge("select", "expand")
+        graph.add_edge("expand", "answer")
+        graph.add_edge("answer", END)
     graph.add_edge("command", END)
-    graph.add_edge("retrieve", "select")
-    graph.add_edge("select", "expand")
-    graph.add_edge("expand", "answer")
-    graph.add_edge("answer", END)
     compiled = graph.compile()
 
     run_config: dict[str, Any] = (
@@ -240,6 +252,7 @@ def build_runner(
     _log.info(
         "langgraph_runner_built",
         model=config.model,
+        mode="commands_only" if commands_only else "full",
         rerank=config.rerank,
         expansion=config.expansion,
         qdrant=bool(config.qdrant_url),
