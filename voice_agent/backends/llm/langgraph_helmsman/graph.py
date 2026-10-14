@@ -42,7 +42,9 @@ from voice_agent.actions.prompt import SYSTEM_PROMPT
 from voice_agent.actions.schema import RESPONSE_FORMAT
 from voice_agent.logging_setup import get_logger
 
-from . import helpers, retrieval, tracing
+from voice_agent import tracing
+
+from . import helpers, retrieval
 
 _log = get_logger("llm.langgraph")
 

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from voice_agent.ingestion import chunking, metadata
-from voice_agent.ingestion.chunking import (
+from voice_agent.kb.ingestion import chunking, metadata
+from voice_agent.kb.ingestion.chunking import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
     chunk_fixed_size,
@@ -18,7 +18,7 @@ from voice_agent.ingestion.chunking import (
     chunk_text,
     clean_pdf_text,
 )
-from voice_agent.ingestion.metadata import (
+from voice_agent.kb.ingestion.metadata import (
     DecisionResult,
     apply_decisions,
     audit_all_rejected,

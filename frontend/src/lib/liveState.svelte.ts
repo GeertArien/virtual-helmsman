@@ -105,6 +105,11 @@ function onEvent(ev: AgentEvent) {
     case 'connection_state':
       live.simulator = ev.state;
       break;
+    default:
+      // A kind the union doesn't know: backend and frontend event types have
+      // drifted. Log it so the drift is noticed instead of silently dropped
+      // (issue #12 §8 -- input_mode_changed once vanished exactly this way).
+      console.warn('Unknown event kind from backend', ev);
   }
 }
 

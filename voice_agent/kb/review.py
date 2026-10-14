@@ -1,7 +1,7 @@
 """HTTP endpoints for the in-backend HITL chunk-review flow.
 
 Five routes mounted at ``/api/review``, backed by the in-process
-:class:`~voice_agent.ingestion.engine.IngestionEngine` (see
+:class:`~voice_agent.kb.ingestion.engine.IngestionEngine` (see
 ``docs/LOCAL_INGESTION.md``):
 
 * ``POST /api/review/upload``            -- accept a PDF, return 202, and run
@@ -31,7 +31,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
 from voice_agent.config import IngestionRuntime
-from voice_agent.ingestion.engine import IngestionEngine
+from voice_agent.kb.ingestion.engine import IngestionEngine
 from voice_agent.logging_setup import get_logger
 
 

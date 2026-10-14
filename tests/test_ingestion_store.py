@@ -14,8 +14,8 @@ from typing import Any
 import httpx
 import pytest
 
-from voice_agent.ingestion import qdrant
-from voice_agent.ingestion.store import IngestionStore
+from voice_agent.kb.ingestion import qdrant
+from voice_agent.kb.ingestion.store import IngestionStore
 
 
 @pytest.fixture

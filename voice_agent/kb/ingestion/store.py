@@ -12,6 +12,12 @@ Two tables in one local database file, replacing the two n8n datatables:
   ``actie`` / ``resultaat`` + auto id/createdAt), serving both the ingestion
   pipeline's audit rows and the UI's ``POST /api/review/audit-event`` writes.
 
+  The Dutch column names are an **explicit decision**, not overlooked n8n
+  residue (issue #12 §6): they are the schema of every existing audit
+  database and are baked through the API and frontend types. Renaming would
+  be a data migration plus an API break for zero functional gain; the
+  product's audit audience reads Dutch. Revisit only if the audience changes.
+
 All methods are synchronous and open a short-lived connection per call --
 operations are tiny, local, and infrequent (a handful per upload/review),
 so connection pooling or WAL tuning would be ceremony. Async callers wrap

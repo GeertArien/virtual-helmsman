@@ -413,7 +413,7 @@ voice_agent/        package: config, pipeline, metrics, logging, backends, actio
   backends/{stt,tts,vad,turn,llm,simulator}/   swappable backends + factories
   actions/          JSON action schema, parser, dispatch, processor, prompt
   api/              FastAPI + WebSocket control plane for the frontend
-  ingestion/        in-backend HITL pipeline (chunking, store, qdrant, engine)
+  kb/               knowledge-base half: documents + review routers, HITL ingestion
 scripts/            smoke, report, bench_stt, bench_tts
 tests/              unit tests (no network, no GPU)
 frontend/           SvelteKit dashboard (see frontend/README.md)

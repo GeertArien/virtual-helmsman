@@ -1,4 +1,8 @@
-"""Optional Langfuse tracing for the LangGraph helmsman backend.
+"""Optional Langfuse tracing, shared infrastructure for both process halves.
+
+Used by the LangGraph helmsman backend (voice side) and the ingestion
+doc-summary call (knowledge-base side) -- which is why it lives at the top
+level rather than inside either package (issue #12 §6).
 
 Langfuse is wired as a LangChain callback handler, passed into every graph
 invocation so each LLM / retrieval step is traced (prompt, completion, token
