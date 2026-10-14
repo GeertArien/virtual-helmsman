@@ -211,6 +211,18 @@ to serve it.
 Both backends are HTTP-only and typically reachable on the same host as
 the agent (LM Studio at `:1234`).
 
+**System prompts.** Both backends send the helmsman system prompt from
+`llm.system_prompt`, and the `langgraph` question branch answers with
+`llm.rag_system_prompt` — both editable on the dashboard's Config page
+(apply with *Reload backend*). When unset — the normal case — the built-in
+prompts from `voice_agent/actions/prompt.py` are used, and the editor shows
+that text as the starting point; saving an unmodified or blank prompt keeps
+the key out of `config.yaml` so the installation tracks future improvements
+to the shipped defaults. If you customize them, keep the output-contract
+sections intact (the helmsman prompt's OUTPUT FORMAT / Action types; the RAG
+prompt's `{answer, source_chunk_id}` shape) — they define the JSON the agent
+parses; breaking them stops command execution or degrades answers.
+
 ### `langgraph` (default, in-backend RAG)
 
 **LangGraph** orchestrates the turn (intent classify → command parse

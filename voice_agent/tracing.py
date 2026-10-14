@@ -69,10 +69,12 @@ def build_callback_handler(config: Any) -> Any | None:
 
     # The SDK reads keys/host from the environment; set them so both v2 and v3
     # handler signatures pick them up without per-version constructor kwargs.
-    os.environ.setdefault("LANGFUSE_PUBLIC_KEY", public_key)
-    os.environ.setdefault("LANGFUSE_SECRET_KEY", secret_key)
+    # Set, don't setdefault: after a config reload (exec) the child inherits
+    # the previous process's values, and keeping them would pin rotated keys.
+    os.environ["LANGFUSE_PUBLIC_KEY"] = public_key
+    os.environ["LANGFUSE_SECRET_KEY"] = secret_key
     if config.langfuse_host:
-        os.environ.setdefault("LANGFUSE_HOST", config.langfuse_host)
+        os.environ["LANGFUSE_HOST"] = config.langfuse_host
 
     try:
         handler = handler_cls()

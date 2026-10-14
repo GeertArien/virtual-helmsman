@@ -32,10 +32,23 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from voice_agent.actions.prompt import (
+    RAG_SYSTEM_PROMPT as DEFAULT_RAG_SYSTEM_PROMPT,
+    SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT,
+)
 from voice_agent.backends.simulator.base import EngineOrder
 from voice_agent.qdrant import api_key_headers
+
+
+# The editable prompt fields and their built-in defaults. Consumed by the
+# blank-means-default validator below and by the config router, which strips
+# an unmodified default from the file on save (see api/config_router.py).
+PROMPT_DEFAULTS: dict[str, str] = {
+    "system_prompt": DEFAULT_SYSTEM_PROMPT,
+    "rag_system_prompt": DEFAULT_RAG_SYSTEM_PROMPT,
+}
 
 
 class _Base(BaseModel):
@@ -46,7 +59,17 @@ class _Base(BaseModel):
 
 class SttConfig(_Base):
     backend: Literal["parakeet_onnx", "parakeet_nemo", "whisper"] = "parakeet_onnx"
-    model: str
+    # Free-form so a new model is a config change, not a code edit. The
+    # examples (one per backend, known to work) surface as dropdown
+    # suggestions in the Config page's combo box.
+    model: str = Field(
+        examples=[
+            "nemo-parakeet-tdt-0.6b-v2",  # parakeet_onnx (English-only)
+            "nemo-parakeet-tdt-0.6b-v3",  # parakeet_onnx (multilingual)
+            "nvidia/parakeet-tdt-0.6b",  # parakeet_nemo
+            "openai/whisper-large-v3-turbo",  # whisper
+        ]
+    )
     device: str = "cuda"
     language: str = "en"
     # Pre-quantized weights variant published alongside the FP32 baseline.
@@ -64,7 +87,26 @@ class SttConfig(_Base):
 
 class TtsConfig(_Base):
     backend: Literal["kokoro", "piper"] = "kokoro"
-    voice: str
+    # Free-form (voices auto-download by id). The examples surface as dropdown
+    # suggestions in the Config page's combo box: the standard English Kokoro
+    # voices (af/am = American female/male, bf/bm = British), then a few
+    # Piper voices.
+    voice: str = Field(
+        examples=[
+            "af_bella",  # kokoro
+            "af_heart",  # kokoro
+            "af_nicole",  # kokoro
+            "af_sarah",  # kokoro
+            "am_adam",  # kokoro
+            "am_michael",  # kokoro
+            "bf_emma",  # kokoro
+            "bm_george",  # kokoro
+            "bm_lewis",  # kokoro
+            "en_US-lessac-medium",  # piper
+            "en_US-ryan-high",  # piper
+            "en_GB-alan-medium",  # piper
+        ]
+    )
     device: str = "cuda"
 
 
@@ -156,13 +198,44 @@ class LlmConfig(_Base):
 
     backend: Literal["openai_compatible", "langgraph"] = "openai_compatible"
     # The chat model id sent to the lm_studio server. Free-form string so a new
-    # model is a config change, not a code edit. Models evaluated so far for the
-    # helmsman's JSON-structured output: google/gemma-4-e4b,
-    # unsloth/gemma-4-e4b-it, qwen/qwen3.5-9b, ministral-3-8b-instruct-2512,
-    # google/gemma-4-e2b, nvidia/nemotron-3-nano-4b.
-    model: str
+    # model is a config change, not a code edit. The examples are the models
+    # evaluated so far for the helmsman's JSON-structured output; they surface
+    # as dropdown suggestions in the Config page's combo box.
+    model: str = Field(
+        examples=[
+            "google/gemma-4-e4b",
+            "unsloth/gemma-4-e4b-it",
+            "google/gemma-4-e2b",
+            "qwen/qwen3.5-9b",
+            "ministral-3-8b-instruct-2512",
+            "nvidia/nemotron-3-nano-4b",
+        ]
+    )
     timeout_seconds: float = 30.0
     max_retries: int = 1
+
+    # The helmsman system prompt sent to the chat model (both backends). The
+    # default is the built-in prompt (voice_agent/actions/prompt.py), loaded
+    # as the field default so the Config page shows the real text rather than
+    # an empty box. Blank falls back to the built-in, and the config editor
+    # never writes an unmodified default to disk (see api/config_router.py),
+    # so an untouched installation keeps tracking prompt improvements.
+    # CAUTION when customizing: the OUTPUT FORMAT / Action types sections
+    # define the JSON contract that voice_agent/actions/schema.py parses --
+    # edits that break that contract stop command parsing entirely.
+    system_prompt: str = Field(
+        default=DEFAULT_SYSTEM_PROMPT,
+        json_schema_extra={"format": "multiline"},
+    )
+
+    # Same treatment for the langgraph RAG answer prompt (the question branch).
+    # Its output contract ({answer, source_chunk_id}) is enforced by
+    # RAG_RESPONSE_FORMAT -- a custom prompt should keep describing that shape
+    # or answer quality degrades to whatever the schema coerces.
+    rag_system_prompt: str = Field(
+        default=DEFAULT_RAG_SYSTEM_PROMPT,
+        json_schema_extra={"format": "multiline"},
+    )
 
     # --- langgraph only -------------------------------------------------
     # ``commands_only`` drops the intent classifier and the whole RAG branch:
@@ -184,6 +257,18 @@ class LlmConfig(_Base):
     # llm_error_runtime) written to the shared ``database`` SQLite store so the
     # Audit page shows live helmsman activity alongside ingestion events.
     audit_enabled: bool = False
+
+    @field_validator("system_prompt", "rag_system_prompt", mode="before")
+    @classmethod
+    def _blank_prompt_means_default(cls, value: Any, info: Any) -> Any:
+        """``null`` or whitespace-only -> the built-in prompt.
+
+        Clearing the textarea on the Config page is the "reset to default"
+        gesture; an actually-empty system prompt is never what anyone wants.
+        """
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return PROMPT_DEFAULTS[info.field_name]
+        return value
 
 
 class SimulatorRealConfig(_Base):
@@ -384,6 +469,8 @@ class LlmRuntime:
     base_url: str
     model: str
     mode: str
+    system_prompt: str
+    rag_system_prompt: str
     timeout_seconds: float
     max_retries: int
     rerank: bool
@@ -476,6 +563,8 @@ class AppConfig(_Base):
             base_url=self.lm_studio.base_url,
             model=self.llm.model,
             mode=self.llm.mode,
+            system_prompt=self.llm.system_prompt,
+            rag_system_prompt=self.llm.rag_system_prompt,
             timeout_seconds=self.llm.timeout_seconds,
             max_retries=self.llm.max_retries,
             rerank=self.llm.rerank,

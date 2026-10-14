@@ -38,7 +38,6 @@ from typing import Any, Awaitable, Callable, TypedDict
 
 import httpx
 
-from voice_agent.actions.prompt import SYSTEM_PROMPT
 from voice_agent.actions.schema import RESPONSE_FORMAT
 from voice_agent.logging_setup import get_logger
 
@@ -144,7 +143,7 @@ def build_runner(
 
     async def command_node(state: dict[str, Any]) -> dict[str, Any]:
         resp = await command_llm.ainvoke(
-            [SystemMessage(SYSTEM_PROMPT), HumanMessage(state["chat_input"])]
+            [SystemMessage(config.system_prompt), HumanMessage(state["chat_input"])]
         )
         envelope = helpers.command_envelope(str(resp.content))
         await _audit(helpers.command_audit_row(envelope))
@@ -205,7 +204,7 @@ def build_runner(
         chunks = state["chunks"]
         resp = await answer_llm.ainvoke(
             [
-                SystemMessage(helpers.RAG_SYSTEM_PROMPT),
+                SystemMessage(config.rag_system_prompt),
                 HumanMessage(helpers.build_rag_user(state["chat_input"], chunks)),
             ]
         )

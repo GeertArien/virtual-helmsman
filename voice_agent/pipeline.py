@@ -41,7 +41,6 @@ from pipecat.turns.user_mute import AlwaysUserMuteStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 
 from voice_agent.actions.processor import JsonActionProcessor
-from voice_agent.actions.prompt import SYSTEM_PROMPT
 from voice_agent.api.events import ConnectionStateEvent, EventBus, UserTranscriptObserver
 from voice_agent.backends.llm.factory import create_llm
 from voice_agent.backends.simulator.base import ConnectionState, SimulatorClient
@@ -294,7 +293,7 @@ def assemble_task(
     # tool calls (a small local model emits constrained JSON far more reliably).
     # AlwaysUserMuteStrategy suppresses STT input while the bot is speaking, so
     # the agent does not transcribe its own TTS as a phantom command.
-    context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
+    context = LLMContext([{"role": "system", "content": config.llm.system_prompt}])
     context_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
@@ -371,7 +370,7 @@ def assemble_text_task(
         simulator=backends.simulator, event_bus=event_bus
     )
     llm = backends.llm_factory()
-    context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
+    context = LLMContext([{"role": "system", "content": config.llm.system_prompt}])
     context_aggregator = LLMContextAggregatorPair(context)
 
     latency_tracker = LatencyTracker(

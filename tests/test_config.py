@@ -98,6 +98,42 @@ def test_audit_defaults_off() -> None:
     assert config.database.path == "./data/ingestion.db"
 
 
+_PROMPT_FIELDS = ["system_prompt", "rag_system_prompt"]
+
+
+@pytest.mark.parametrize("field", _PROMPT_FIELDS)
+def test_prompt_defaults_to_builtin(field: str) -> None:
+    """Unset in YAML -> the built-in prompt, in the model and the runtime."""
+    from voice_agent.config import PROMPT_DEFAULTS
+
+    config = parse_config(_minimal())
+    assert getattr(config.llm, field) == PROMPT_DEFAULTS[field]
+    assert getattr(config.llm_runtime(), field) == PROMPT_DEFAULTS[field]
+
+
+@pytest.mark.parametrize("field", _PROMPT_FIELDS)
+def test_prompt_custom_value_reaches_runtime(field: str) -> None:
+    data = _minimal()
+    data["llm"][field] = "You are a terse helmsman. Reply in JSON."
+    config = parse_config(data)
+    assert (
+        getattr(config.llm_runtime(), field)
+        == "You are a terse helmsman. Reply in JSON."
+    )
+
+
+@pytest.mark.parametrize("field", _PROMPT_FIELDS)
+@pytest.mark.parametrize("blank", [None, "", "   \n"])
+def test_prompt_blank_falls_back_to_builtin(field: str, blank: Any) -> None:
+    """Clearing a prompt in the Config page must never mean 'no prompt'."""
+    from voice_agent.config import PROMPT_DEFAULTS
+
+    data = _minimal()
+    data["llm"][field] = blank
+    config = parse_config(data)
+    assert getattr(config.llm, field) == PROMPT_DEFAULTS[field]
+
+
 def test_n8n_backend_rejected() -> None:
     """n8n was removed -- selecting it is now a validation error."""
     data = _minimal()

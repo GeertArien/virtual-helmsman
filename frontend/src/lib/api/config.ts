@@ -18,6 +18,13 @@ export interface JsonSchemaProperty {
   title?: string;
   description?: string;
   default?: unknown;
+  /** Non-standard hint from the backend (`json_schema_extra`): "multiline"
+   *  renders a textarea instead of a one-line text input. */
+  format?: string;
+  /** Known-good values for a free-form string field (Pydantic `examples`).
+   *  Rendered as <datalist> dropdown suggestions -- unlike `enum`, the
+   *  field still accepts any value. */
+  examples?: unknown[];
   enum?: unknown[];
   /** Pydantic emits ``const`` (not ``enum``) for single-value Literals.
    *  The form normalises this to a one-element enum at render time. */

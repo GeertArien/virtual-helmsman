@@ -46,34 +46,10 @@ RERANK_SYSTEM = (
     "of decreasing relevance. No prose, no markdown, just the JSON object."
 )
 
-# Mirrors the n8n "Build Prompt" RAG system prompt verbatim so answer quality
-# and the rule-isolation behaviour match the workflow exactly.
-RAG_SYSTEM_PROMPT = (
-    "You are the knowledge assistant of the Virtual Helmsman. You answer "
-    "questions about maritime regulations, COLREGS, VTS procedures, port "
-    "information, and navigation, exclusively based on the supplied context.\n\n"
-    "Rules:\n"
-    "1. Answer ONLY based on the given context. If the answer is not there, "
-    "say so honestly inside the answer field.\n"
-    "2. Answer ALWAYS in English, regardless of the question's language. If the "
-    "question is not in English, answer in English and add a brief note that "
-    "English is the supported language.\n"
-    "3. If the question names a specific rule, article, or number (e.g. "
-    "'Rule 15', 'Article III'), use ONLY text that explicitly addresses that "
-    "rule or article. Adjacent rules that appear in the same chunk (e.g. the "
-    "text of Rule 14 just before a 'Rule 15' header) MUST NOT be used to answer "
-    "the question. If the specific rule text is not fully present in the "
-    "context, say so honestly rather than citing a neighbouring rule.\n\n"
-    "Output format — respond with ONLY a single JSON object with exactly these "
-    "two keys, no markdown, no preamble:\n"
-    '{\n  "answer": "<your answer text in English>",\n'
-    '  "source_chunk_id": "<chunk_id of the chunk that most directly supports '
-    'the answer, e.g. chunk_025>"\n}\n'
-    "If the answer is not in the context, still emit valid JSON: set answer to "
-    "the honest 'not in context' explanation and source_chunk_id to the "
-    "chunk_id whose topic is closest to the question (or the first chunk if "
-    "nothing is close)."
-)
+# The RAG answer system prompt lives in voice_agent/actions/prompt.py
+# (RAG_SYSTEM_PROMPT) so the config module can use it as the default for the
+# editable llm.rag_system_prompt field without importing this package; the
+# answer node receives the effective prompt via LlmRuntime.
 
 # JSON-schema response_format for the RAG answer call, lifted from the n8n
 # "RAG Answer" node. Hard-constrains the model to {answer, source_chunk_id}.
