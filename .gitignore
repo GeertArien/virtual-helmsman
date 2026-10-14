@@ -12,6 +12,8 @@ env/
 # Environment / secrets
 .env
 *.env
+# Local config (simulator endpoint values etc. -- never committed; see README)
+config.local.yaml
 
 # Build artifacts
 dist/
