@@ -122,7 +122,22 @@ successful install on the target client, lock the full transitive set
 
 ## Quickstart
 
-The agent and the dashboard are two processes. Run each in its own terminal:
+The agent and the dashboard are two processes. On Windows, the helper
+scripts start and stop both as background processes (logs + PIDs in
+`logs/run/`):
+
+```powershell
+.\scripts\start.cmd    # uses config.local.yaml if present, else config.yaml
+.\scripts\stop.cmd     # stops both (finds them by port, so it survives
+                       # the Config page's "Reload backend" PID change)
+```
+
+The `.cmd` wrappers run the underlying `.ps1` scripts with the execution
+policy bypassed for that one invocation, so they work on a default Windows
+install (where `.\scripts\start.ps1` would be refused) and in both Windows
+PowerShell 5.1 and PowerShell 7.
+
+Or run each in its own terminal:
 
 ```bash
 # Terminal 1 — voice agent + control-plane API (loads the GPU models and serves
@@ -426,7 +441,7 @@ voice_agent/        package: config, pipeline, metrics, logging, backends, actio
   actions/          JSON action schema, parser, dispatch, processor, prompt
   api/              FastAPI + WebSocket control plane for the frontend
   kb/               knowledge-base half: documents + review routers, HITL ingestion
-scripts/            smoke, report, bench_stt, bench_tts
+scripts/            start/stop (Windows), smoke, report, bench_stt, bench_tts
 tests/              unit tests (no network, no GPU)
 frontend/           SvelteKit dashboard (see frontend/README.md)
 docs/               LANGGRAPH_BACKEND.md (runtime helmsman),
