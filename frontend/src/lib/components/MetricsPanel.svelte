@@ -3,8 +3,6 @@
 
   let { turns }: { turns: TurnMetricsEvent[] } = $props();
 
-  const V2V_TARGET_MS = 800;
-
   /** Most-recent turn's voice-to-voice latency, big and easy to read. */
   const latest = $derived(turns.at(-1));
 
@@ -19,12 +17,6 @@
     return s[i];
   }
 
-  function statusFor(ms: number): string {
-    if (ms <= V2V_TARGET_MS) return 'good';
-    if (ms <= V2V_TARGET_MS * 1.5) return 'warn';
-    return 'bad';
-  }
-
   function fmt(ms: number | undefined): string {
     return ms == null ? '—' : `${Math.round(ms)} ms`;
   }
@@ -34,7 +26,7 @@
   <h2>Latency</h2>
   <div class="headline">
     <div class="big">
-      <span class="value mono" data-status={latest ? statusFor(latest.metrics_ms.voice_to_voice_ms ?? 0) : 'neutral'}>
+      <span class="value mono">
         {fmt(latest?.metrics_ms.voice_to_voice_ms)}
       </span>
       <span class="label">voice → voice (last)</span>
@@ -42,10 +34,6 @@
     <div class="med">
       <span class="value mono">{fmt(recentP50 ?? undefined)}</span>
       <span class="label">p50 (last {Math.min(turns.length, 20)})</span>
-    </div>
-    <div class="med">
-      <span class="value mono">{V2V_TARGET_MS} ms</span>
-      <span class="label">target</span>
     </div>
   </div>
 
@@ -94,9 +82,6 @@
   }
   .big .value { font-size: 1.75rem; font-weight: 700; }
   .med .value { font-size: 1rem; font-weight: 500; }
-  .value[data-status='good'] { color: var(--good); }
-  .value[data-status='warn'] { color: var(--warn); }
-  .value[data-status='bad'] { color: var(--bad); }
   .label {
     display: block;
     color: var(--fg-muted);

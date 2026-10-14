@@ -65,6 +65,9 @@ langgraph = [
     "langgraph>=0.2.0,<1.0",
     "langchain-core>=0.3.0,<1.0",
     "langchain-openai>=0.2.0,<1.0",
+    # The full langchain package is needed only by Langfuse: from v4 its
+    # LangChain CallbackHandler refuses to import with langchain-core alone.
+    "langchain>=0.3.0,<1.0",
     "langfuse>=2.0",
     # PDF text extraction for the HITL ingestion pipeline.
     "pypdf>=5.0",

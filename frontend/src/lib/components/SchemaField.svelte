@@ -88,6 +88,21 @@
   /** Display label = JSON Schema `title` if present, else the field name. */
   const label = $derived(innerResolved.title ?? name);
 
+  /** Suggestions dropdown (schema `examples` on a free string field).
+   *  A <datalist> filters its options by the current value, so with a value
+   *  filled in it shows a single entry -- useless for "pick another model".
+   *  Render a real <select> instead: all examples, the current value when it
+   *  isn't one of them, and a "custom…" row that switches to a free text
+   *  input (the field stays schema-open; the dropdown is UI only). */
+  const CUSTOM = '\u0000custom';
+  let customMode = $state(false);
+  const exampleValues = $derived(
+    (innerResolved.examples ?? []).map((x) => String(x))
+  );
+  const currentText = $derived(
+    value === null || value === undefined ? '' : String(value)
+  );
+
   /** Comma-separated <-> array conversion for the simple list editor. */
   function arrayToString(arr: unknown): string {
     if (Array.isArray(arr)) return arr.map((x) => String(x)).join(', ');
@@ -99,6 +114,18 @@
       .map((x) => x.trim())
       .filter((x) => x.length > 0);
   }
+
+  /** Multiline fields render collapsed; the badge says whether the value
+   *  differs from the schema default (= the built-in prompt). */
+  const multilineText = $derived(
+    value === null || value === undefined
+      ? String(innerResolved.default ?? '')
+      : String(value)
+  );
+  const multilineCustomized = $derived(
+    multilineText.trim() !== String(innerResolved.default ?? '').trim() &&
+      multilineText.trim() !== ''
+  );
 </script>
 
 {#if innerResolved.type === 'object' && innerResolved.properties}
@@ -119,6 +146,35 @@
       />
     {/each}
   </fieldset>
+{:else if innerResolved.format === 'multiline'}
+  <!-- Long free text (e.g. the llm prompts). Collapsed by default so a few
+       screens of prompt text don't swamp the section; the badge says at a
+       glance whether the value differs from the built-in default. The value
+       usually isn't in config.yaml at all -- the schema default IS the
+       built-in text, so show that as the starting point. Clearing the box
+       means "back to the default" (the backend treats blank as default and
+       never writes the default to disk). -->
+  <details class="prompt" class:has-error={error !== null}>
+    <summary>
+      <span class="name">{label}</span>
+      {#if innerResolved.description}
+        <span class="desc" title={innerResolved.description}>?</span>
+      {/if}
+      <span class="badge" class:custom={multilineCustomized}>
+        {multilineCustomized ? 'customized' : 'default'}
+      </span>
+    </summary>
+    <textarea
+      rows="18"
+      spellcheck="false"
+      value={multilineText}
+      oninput={(e) => emit((e.currentTarget as HTMLTextAreaElement).value)}
+      placeholder="(empty = use the built-in default)"
+    ></textarea>
+    {#if error}
+      <span class="err">{error}</span>
+    {/if}
+  </details>
 {:else}
   <label class="row" class:has-error={error !== null}>
     <span class="lbl">
@@ -180,17 +236,49 @@
         oninput={(e) => emit(stringToArray((e.currentTarget as HTMLInputElement).value))}
         placeholder="comma-separated"
       />
-    {:else}
-      <input
-        type="text"
-        value={value === null || value === undefined ? '' : String(value)}
-        oninput={(e) => {
-          const raw = (e.currentTarget as HTMLInputElement).value;
-          if (raw === '' && nullable) emit(null);
-          else emit(raw);
+    {:else if exampleValues.length && !customMode}
+      <select
+        value={currentText}
+        onchange={(e) => {
+          const raw = (e.currentTarget as HTMLSelectElement).value;
+          if (raw === CUSTOM) {
+            customMode = true;
+          } else {
+            emit(raw);
+          }
         }}
-        placeholder={nullable ? '(null)' : ''}
-      />
+      >
+        {#if !exampleValues.includes(currentText)}
+          <option value={currentText}>{currentText || '(unset)'}</option>
+        {/if}
+        {#each exampleValues as ex (ex)}
+          <option value={ex}>{ex}</option>
+        {/each}
+        <option value={CUSTOM}>custom…</option>
+      </select>
+    {:else}
+      <span class="freeform" class:with-list={exampleValues.length > 0}>
+        <input
+          type="text"
+          value={currentText}
+          oninput={(e) => {
+            const raw = (e.currentTarget as HTMLInputElement).value;
+            if (raw === '' && nullable) emit(null);
+            else emit(raw);
+          }}
+          placeholder={nullable ? '(null)' : ''}
+        />
+        {#if exampleValues.length}
+          <button
+            type="button"
+            class="to-list"
+            title="Back to the suggestions dropdown"
+            onclick={() => (customMode = false)}
+          >
+            list
+          </button>
+        {/if}
+      </span>
     {/if}
 
     {#if error}
@@ -234,6 +322,53 @@
     cursor: help;
   }
 
+  .prompt {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    margin: 0.3rem 0;
+    background: var(--bg-elev-2);
+  }
+  .prompt.has-error {
+    border-color: var(--bad);
+  }
+  .prompt summary {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.35rem 0.55rem;
+    cursor: pointer;
+    font-size: 0.85rem;
+    list-style-position: inside;
+  }
+  .prompt .badge {
+    margin-left: auto;
+    font-size: 0.7rem;
+    padding: 0.05rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--fg-muted);
+  }
+  .prompt .badge.custom {
+    color: var(--warn);
+    border-color: var(--warn);
+  }
+  .prompt textarea {
+    display: block;
+    width: calc(100% - 1.1rem);
+    margin: 0.2rem 0.55rem 0.55rem;
+    box-sizing: border-box;
+    resize: vertical;
+    min-height: 12rem;
+    line-height: 1.45;
+    font-size: 0.78rem;
+  }
+  .prompt .err {
+    display: block;
+    padding: 0 0.55rem 0.45rem;
+    color: var(--bad);
+    font-size: 0.75rem;
+  }
+  textarea,
   input[type='text'],
   input[type='number'],
   select {
@@ -247,6 +382,7 @@
     font-family: ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace;
   }
   input:focus,
+  textarea:focus,
   select:focus {
     border-color: var(--accent);
   }
@@ -261,6 +397,29 @@
     grid-column: 2;
     color: var(--bad);
     font-size: 0.75rem;
+  }
+
+  .freeform {
+    display: flex;
+    gap: 0.3rem;
+    align-items: center;
+  }
+  .freeform input {
+    flex: 1;
+    min-width: 0;
+  }
+  .to-list {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg-elev-2);
+    color: var(--fg-muted);
+    font-size: 0.72rem;
+    padding: 0.25rem 0.5rem;
+    cursor: pointer;
+  }
+  .to-list:hover {
+    color: var(--fg);
+    border-color: var(--fg-muted);
   }
 
   .nested {

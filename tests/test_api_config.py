@@ -171,6 +171,72 @@ def test_put_config_does_not_persist_env_overrides(
     assert on_disk["lm_studio"]["base_url"] == "http://localhost:1234/v1"
 
 
+_PROMPT_FIELDS = ["system_prompt", "rag_system_prompt"]
+
+
+@pytest.mark.parametrize("field", _PROMPT_FIELDS)
+def test_put_config_strips_unmodified_default_prompt(
+    tmp_path: Path, field: str
+) -> None:
+    """A round-tripped default prompt must not be baked into config.yaml.
+
+    The schema defaults for the ``llm`` prompt fields are the full built-in
+    texts (so the editor can display them); writing those copies to disk
+    would freeze them and shadow future improvements to the shipped prompts.
+    """
+    from voice_agent.config import PROMPT_DEFAULTS
+
+    cfg_path = _seed_config_file(tmp_path / "config.yaml")
+    client = _build_app_with_config(cfg_path)
+
+    payload: dict[str, Any] = {
+        **_VALID_CONFIG,
+        "llm": {**_VALID_CONFIG["llm"], field: PROMPT_DEFAULTS[field]},
+    }
+    res = client.put("/api/config", json=payload)
+    assert res.status_code == 200
+
+    with cfg_path.open() as fh:
+        on_disk = yaml.safe_load(fh)
+    assert field not in on_disk["llm"]
+
+
+@pytest.mark.parametrize("field", _PROMPT_FIELDS)
+def test_put_config_strips_blank_prompt(tmp_path: Path, field: str) -> None:
+    """Blank means "use the default" -- stored as absence, not as ''."""
+    cfg_path = _seed_config_file(tmp_path / "config.yaml")
+    client = _build_app_with_config(cfg_path)
+
+    payload: dict[str, Any] = {
+        **_VALID_CONFIG,
+        "llm": {**_VALID_CONFIG["llm"], field: "  \n"},
+    }
+    res = client.put("/api/config", json=payload)
+    assert res.status_code == 200
+
+    with cfg_path.open() as fh:
+        on_disk = yaml.safe_load(fh)
+    assert field not in on_disk["llm"]
+
+
+@pytest.mark.parametrize("field", _PROMPT_FIELDS)
+def test_put_config_persists_customised_prompt(tmp_path: Path, field: str) -> None:
+    cfg_path = _seed_config_file(tmp_path / "config.yaml")
+    client = _build_app_with_config(cfg_path)
+
+    custom = "You are a terse helmsman. Reply in JSON."
+    payload: dict[str, Any] = {
+        **_VALID_CONFIG,
+        "llm": {**_VALID_CONFIG["llm"], field: custom},
+    }
+    res = client.put("/api/config", json=payload)
+    assert res.status_code == 200
+
+    with cfg_path.open() as fh:
+        on_disk = yaml.safe_load(fh)
+    assert on_disk["llm"][field] == custom
+
+
 def test_put_config_422_on_invalid_literal(tmp_path: Path) -> None:
     cfg_path = _seed_config_file(tmp_path / "config.yaml")
     client = _build_app_with_config(cfg_path)
@@ -248,6 +314,31 @@ def test_reload_endpoint_returns_immediately_without_blocking(
     client = _build_app_with_config(cfg_path)
     res = client.post("/api/config/reload")
     assert res.status_code == 200
+
+
+def test_forget_dotenv_vars_drops_file_sourced_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keys named in .env are dropped from the process env (so the exec'd
+    child re-reads the file -- rotated secrets must not stay shadowed by the
+    inherited environment); env vars not in .env are left alone."""
+    from voice_agent.api.config_router import _forget_dotenv_vars
+
+    (tmp_path / ".env").write_text(
+        "LANGFUSE_SECRET_KEY=sk-new\nSOME_BLANK_KEY=\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-stale-inherited")
+    monkeypatch.setenv("SOME_BLANK_KEY", "stale")
+    monkeypatch.setenv("NOT_IN_DOTENV", "operator-set")
+
+    _forget_dotenv_vars()
+
+    import os
+
+    assert "LANGFUSE_SECRET_KEY" not in os.environ
+    assert "SOME_BLANK_KEY" not in os.environ
+    assert os.environ["NOT_IN_DOTENV"] == "operator-set"
 
 
 # ---------- 404 when config plane absent -----------------------------------
